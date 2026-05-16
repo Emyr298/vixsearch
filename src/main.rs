@@ -1,33 +1,29 @@
-mod index;
+use dotenvy::dotenv;
+
+use crate::collection::{CreateCollectionParam, Field, FieldType};
+
+mod collection;
+mod config;
+mod error;
+mod orchestrator;
+mod query;
+mod shared;
+mod translog;
+mod transport;
 
 fn main() {
-    let mut vector_index = index::vector::vector::Index::new(2);
-    vector_index
-        .insert(index::vector::entity::Point::new(
-            "1".to_string(),
-            vec![1.0, 1.0],
-        ))
-        .unwrap();
-
-    vector_index
-        .insert(index::vector::entity::Point::new(
-            "2".to_string(),
-            vec![10.0, 10.0],
-        ))
-        .unwrap();
-
-    vector_index
-        .insert(index::vector::entity::Point::new(
-            "2".to_string(),
-            vec![20.0, 20.0],
-        ))
-        .unwrap();
-
-    let result = vector_index
-        .search(index::vector::param::SearchParam::new(vec![14.0, 14.0], 5))
-        .unwrap();
-
-    for point in result.result {
-        println!("{}:{:?}", point.id, point.pos);
+    if dotenv().is_err() {
+        println!(".env file is not found");
     }
+
+    let collection_manager = collection::new_manager(&std::env::var(config::DATA_DIR).unwrap());
+    collection_manager
+        .create_collection(CreateCollectionParam {
+            name: "blogs".to_string(),
+            fields: vec![Field {
+                name: "title".to_string(),
+                field_type: FieldType::String(String::from("Title")),
+            }],
+        })
+        .unwrap();
 }
