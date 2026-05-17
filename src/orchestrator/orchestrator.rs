@@ -1,6 +1,6 @@
-use crate::{collection, error::Error, orchestrator::CreateCollectionParam, query, translog};
+use crate::{collection, orchestrator::CreateCollectionParam, query, translog, vixerr::Error};
 
-pub trait Orchestrator {
+pub trait Orchestrator: Send + Sync {
     fn create_collection(&self, param: CreateCollectionParam) -> Result<(), Error>;
     fn execute(&self, query: query::Query) -> Result<(), Error>;
 }
@@ -41,7 +41,8 @@ impl OrchestratorImpl {
 impl Orchestrator for OrchestratorImpl {
     fn create_collection(&self, param: CreateCollectionParam) -> Result<(), Error> {
         let coll_param = collection::CreateCollectionParam::try_from(param)?;
-        self.collection_manager.create_collection(coll_param)?;
+        println!("{:?}", coll_param);
+        // self.collection_manager.create_collection(coll_param)?;
         Ok(())
     }
 

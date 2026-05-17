@@ -1,9 +1,10 @@
 use std::{any::Any, collections::HashMap, fs::File, io::Write, path::PathBuf};
 
 use crate::collection::{Collection, param_result::CreateCollectionParam};
-use crate::error::Error;
+use crate::errcode;
+use crate::vixerr::Error;
 
-pub trait Manager {
+pub trait Manager: Send + Sync {
     fn create_collection(&self, param: CreateCollectionParam) -> Result<(), Error>;
     fn delete_collection(&self, name: &str) -> Result<(), Error>;
     fn validate_payload(
@@ -38,9 +39,8 @@ impl Manager for ManagerImpl {
             fields: param.fields,
         };
 
-        let collection_json = serde_json::to_string(&collection).map_err(|_| Error::System {
-            message: "Failed to serialize collection".to_string(),
-        })?;
+        let collection_json = serde_json::to_string(&collection)
+            .map_err(|_| Error::new(errcode::SYSTEM_ERROR, "Failed to serialize collection"))?;
 
         let hash = crc32fast::hash(&collection_json.as_bytes());
 

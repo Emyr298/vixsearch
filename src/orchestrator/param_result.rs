@@ -1,4 +1,4 @@
-use crate::{collection, error::Error, shared};
+use crate::{collection, shared, vixerr::Error};
 
 pub struct CreateCollectionParam {
     pub name: String,
