@@ -1,8 +1,11 @@
+use std::sync::{Arc, RwLock};
 use std::{any::Any, collections::HashMap, fs::File, io::Write, path::PathBuf};
 
-use crate::collection::{Collection, param_result::CreateCollectionParam};
-use crate::errcode;
+use dashmap::DashMap;
+
+use crate::collection::{Collection, CollectionInstance, param_result::CreateCollectionParam};
 use crate::vixerr::Error;
+use crate::{errcode, shared};
 
 pub trait Manager: Send + Sync {
     fn create_collection(&self, param: CreateCollectionParam) -> Result<(), Error>;
@@ -10,12 +13,13 @@ pub trait Manager: Send + Sync {
     fn validate_payload(
         &self,
         collection_name: &str,
-        payload: &HashMap<String, Box<dyn Any>>,
+        payload: &HashMap<String, shared::Value>,
     ) -> Result<bool, Error>;
 }
 
 struct ManagerImpl {
     data_dir: String,
+    instances: DashMap<String, Arc<RwLock<CollectionInstance>>>,
 }
 
 pub fn new_manager(data_dir: &str) -> Box<dyn Manager> {
@@ -26,6 +30,7 @@ impl ManagerImpl {
     fn new(data_dir: &str) -> Self {
         return ManagerImpl {
             data_dir: data_dir.to_string(),
+            instances: DashMap::new(),
         };
     }
 }
@@ -61,7 +66,21 @@ impl Manager for ManagerImpl {
         Ok(())
     }
 
-    fn validate_payload(&self, _: &str, _: &HashMap<String, Box<dyn Any>>) -> Result<bool, Error> {
-        todo!()
+    fn validate_payload(
+        &self,
+        collection_name: &str,
+        document: &HashMap<String, shared::Value>,
+    ) -> Result<bool, Error> {
+        let instance_ref = self
+            .instances
+            .get(collection_name)
+            .ok_or_else(|| Error::new(errcode::NOT_FOUND, "Collection not found"))?;
+
+        let instance = instance_ref
+            .value()
+            .read()
+            .map_err(|_| Error::new(errcode::SYSTEM_ERROR, "Failed to read collection"))?;
+
+        Ok(instance.validate_document(document))
     }
 }

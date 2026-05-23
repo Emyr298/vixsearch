@@ -13,4 +13,4 @@ actix-web = "4"
 thiserror = "2"
 validator = { version = "0.20", features = ["derive"] }
 config = "0.15"
-
+dashmap = "6.2.1"

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use actix_web::http;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
@@ -15,7 +17,7 @@ pub enum DataType {
     Vector,
 }
 
-impl From<DataType> for shared::DataType {
+impl From<DataType> for shared::ValueType {
     fn from(val: DataType) -> Self {
         match val {
             DataType::String => Self::String,
@@ -55,9 +57,55 @@ impl From<CreateCollectionRequestField> for orchestrator::CreateCollectionParamF
     fn from(value: CreateCollectionRequestField) -> Self {
         orchestrator::CreateCollectionParamField {
             name: value.name,
-            field_type: shared::DataType::from(value.field_type),
+            field_type: shared::ValueType::from(value.field_type),
         }
     }
+}
+
+impl TryFrom<serde_json::Value> for shared::Value {
+    type Error = vixerr::Error;
+
+    fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
+        match value {
+            serde_json::Value::String(str) => Ok(Self::String(str)),
+            serde_json::Value::Number(num) => {
+                if num.is_i64() {
+                    Ok(Self::Integer(num.as_i64().unwrap()))
+                } else {
+                    Err(vixerr::Error::new(
+                        errcode::PARSE_ERROR,
+                        "Unsupported value type",
+                    ))
+                }
+            }
+            serde_json::Value::Array(arr) => Ok(Self::Vector(
+                arr.into_iter()
+                    .map(|v| {
+                        v.as_f64().ok_or(vixerr::Error::new(
+                            errcode::PARSE_ERROR,
+                            "Unsupported value type",
+                        ))
+                    })
+                    .collect::<Result<Vec<f64>, _>>()?,
+            )),
+            _ => Err(vixerr::Error::new(
+                errcode::PARSE_ERROR,
+                "Unsupported value type",
+            )),
+        }
+    }
+}
+
+pub fn new_document(
+    payload: HashMap<String, serde_json::Value>,
+) -> Result<HashMap<String, shared::Value>, vixerr::Error> {
+    payload
+        .into_iter()
+        .map(|(k, v)| {
+            let value = shared::Value::try_from(v)?;
+            Ok((k, value))
+        })
+        .collect::<Result<HashMap<String, shared::Value>, _>>()
 }
 
 pub fn http_error(code: impl Into<String>, message: impl Into<String>) -> utils::http::HttpError {

@@ -22,7 +22,7 @@ impl TryFrom<CreateCollectionParam> for collection::CreateCollectionParam {
 
 pub struct CreateCollectionParamField {
     pub name: String,
-    pub field_type: shared::DataType,
+    pub field_type: shared::ValueType,
 }
 
 impl TryFrom<CreateCollectionParamField> for collection::Field {

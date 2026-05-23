@@ -1,4 +1,4 @@
-use crate::shared::DataType;
+use crate::shared::{self, ValueType};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -11,5 +11,5 @@ pub struct Collection {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Field {
     pub name: String,
-    pub field_type: DataType,
+    pub field_type: ValueType,
 }

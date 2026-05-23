@@ -1,8 +1,16 @@
-use crate::{collection, orchestrator::CreateCollectionParam, query, translog, vixerr::Error};
+use std::collections::HashMap;
+
+use crate::{
+    collection, errcode, orchestrator::CreateCollectionParam, shared, translog, vixerr::Error,
+};
 
 pub trait Orchestrator: Send + Sync {
     fn create_collection(&self, param: CreateCollectionParam) -> Result<(), Error>;
-    fn execute(&self, query: query::Query) -> Result<(), Error>;
+    fn insert_document(
+        &self,
+        collection: String,
+        document: HashMap<String, shared::Value>,
+    ) -> Result<(), Error>;
 }
 
 struct OrchestratorImpl {
@@ -27,28 +35,32 @@ impl OrchestratorImpl {
             translog_manager,
         };
     }
-
-    fn insert(&self, collection: String, data: query::InsertData) -> Result<(), Error> {
-        self.collection_manager
-            .validate_payload(collection.as_str(), &data.payload)?;
-
-        self.translog_manager.write_insert(collection, data)?;
-
-        Ok(())
-    }
 }
 
 impl Orchestrator for OrchestratorImpl {
     fn create_collection(&self, param: CreateCollectionParam) -> Result<(), Error> {
         let coll_param = collection::CreateCollectionParam::try_from(param)?;
         println!("{:?}", coll_param);
-        // self.collection_manager.create_collection(coll_param)?;
+        self.collection_manager.create_collection(coll_param)?;
         Ok(())
     }
 
-    fn execute(&self, query: query::Query) -> Result<(), Error> {
-        match query.action {
-            query::Action::Insert(insert_data) => self.insert(query.collection, insert_data),
+    fn insert_document(
+        &self,
+        collection: String,
+        document: HashMap<String, shared::Value>,
+    ) -> Result<(), Error> {
+        let is_valid = self
+            .collection_manager
+            .validate_payload(collection.as_str(), &document)?;
+
+        if !is_valid {
+            return Err(Error::new(
+                errcode::PARSE_ERROR,
+                "Document validation failed",
+            ));
         }
+
+        Ok(())
     }
 }

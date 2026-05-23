@@ -1,3 +1,3 @@
 mod types;
 
-pub use types::DataType;
+pub use types::{Value, ValueType};
