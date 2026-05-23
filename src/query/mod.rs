@@ -1,3 +1,3 @@
 mod entity;
 
-pub use entity::{Action, InsertData, Query};
+pub use entity::{Action, InsertData};

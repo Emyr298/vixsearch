@@ -1,4 +1,4 @@
-use crate::shared::{self, ValueType};
+use crate::shared::ValueType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
