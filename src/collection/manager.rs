@@ -1,11 +1,17 @@
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use std::{collections::HashMap, fs::File, io::Write, path::PathBuf};
 
-use dashmap::DashMap;
+use dashmap::{DashMap, Entry};
 
-use crate::collection::{Collection, CollectionInstance, param_result::CreateCollectionParam};
+use crate::collection::CollectionInstance;
+use crate::collection::instance::InstanceStatus;
+use crate::collection::param_result::{CreateCollectionParam, CreateStorageParam};
 use crate::vixerr::Error;
 use crate::{errcode, shared};
+
+pub trait Storage: Send + Sync {
+    fn create(&self, param: CreateStorageParam) -> Result<(), Error>;
+}
 
 pub trait Manager: Send + Sync {
     fn create_collection(&self, param: CreateCollectionParam) -> Result<(), Error>;
@@ -18,52 +24,55 @@ pub trait Manager: Send + Sync {
 }
 
 struct ManagerImpl {
-    data_dir: String,
+    storage: Box<dyn Storage>,
     instances: DashMap<String, Arc<RwLock<CollectionInstance>>>,
 }
 
-pub fn new_manager(data_dir: &str) -> Box<dyn Manager> {
-    return Box::new(ManagerImpl::new(data_dir));
+pub fn new_manager(storage: Box<dyn Storage>) -> Box<dyn Manager> {
+    return Box::new(ManagerImpl::new(storage));
 }
 
 impl ManagerImpl {
-    fn new(data_dir: &str) -> Self {
+    fn new(storage: Box<dyn Storage>) -> Self {
         return ManagerImpl {
-            data_dir: data_dir.to_string(),
+            storage,
             instances: DashMap::new(),
         };
     }
 }
 
-// TODO: mutex
 impl Manager for ManagerImpl {
     fn create_collection(&self, param: CreateCollectionParam) -> Result<(), Error> {
-        let collection = Collection {
-            id: uuid::Uuid::new_v4().to_string(),
-            name: param.name,
-            fields: param.fields,
-        };
+        let id = uuid::Uuid::new_v4().to_string();
 
-        let collection_json = serde_json::to_string(&collection)
-            .map_err(|_| Error::new(errcode::SYSTEM_ERROR, "Failed to serialize collection"))?;
+        let instance_entry = self.instances.entry(param.name.clone());
+        if let Entry::Occupied(_) = &instance_entry {
+            return Err(Error::new(errcode::EXISTS, "Collection already exists"));
+        }
 
-        let hash = crc32fast::hash(&collection_json.as_bytes());
+        let instance_arc = Arc::new(RwLock::new(CollectionInstance::new(
+            &id,
+            &param.name,
+            &param.fields,
+            InstanceStatus::Loading,
+        )));
 
-        let file_content = format!("{:08x}:{}", hash, collection_json);
+        instance_entry.insert(Arc::clone(&instance_arc)); // early drop for dashmap shard, so it doesn't need to wait for File I/O to release
 
-        let path = PathBuf::from(self.data_dir.as_str()).join(collection.id);
-        let mut file = File::create(path).expect("PANIC: Failed to create collection file on disk");
-        file.write_all(file_content.as_bytes())
-            .expect("PANIC: Failed to write to collection file on disk");
+        let param_name = param.name.clone();
+        if let Err(e) = self.storage.create(param.into_create_storage_param(id)) {
+            self.instances.remove(&param_name);
+            return Err(e);
+        }
+
+        let mut instance = instance_arc.write().unwrap();
+        instance.status = InstanceStatus::Ready;
 
         Ok(())
     }
 
-    fn delete_collection(&self, id: &str) -> Result<(), Error> {
-        let path = PathBuf::from(self.data_dir.as_str()).join(id);
-        std::fs::remove_file(path).expect("PANIC: Failed to remove collection file on disk");
-
-        Ok(())
+    fn delete_collection(&self, _: &str) -> Result<(), Error> {
+        todo!()
     }
 
     fn validate_payload(
@@ -76,10 +85,14 @@ impl Manager for ManagerImpl {
             .get(collection_name)
             .ok_or_else(|| Error::new(errcode::NOT_FOUND, "Collection not found"))?;
 
-        let instance = instance_ref
-            .value()
-            .read()
-            .map_err(|_| Error::new(errcode::SYSTEM_ERROR, "Failed to read collection"))?;
+        let instance = instance_ref.value().read().unwrap();
+
+        if instance.status != InstanceStatus::Ready {
+            return Err(Error::new(
+                errcode::NOT_READY,
+                "Collection not ready or lagging",
+            ));
+        }
 
         Ok(instance.validate_document(document))
     }

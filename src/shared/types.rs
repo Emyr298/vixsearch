@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{errcode, vixerr::Error};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum ValueType {
     String,
     Int32,
@@ -20,6 +20,16 @@ impl FromStr for ValueType {
             "int32" => Ok(ValueType::Int32),
             "vector" => Ok(ValueType::Vector),
             _ => Err(Error::new(errcode::PARSE_ERROR, "Invalid value type")),
+        }
+    }
+}
+
+impl Into<String> for ValueType {
+    fn into(self) -> String {
+        match self {
+            ValueType::String => "string".to_string(),
+            ValueType::Int32 => "int32".to_string(),
+            ValueType::Vector => "vector".to_string(),
         }
     }
 }

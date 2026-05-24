@@ -7,9 +7,8 @@ mod collection;
 mod config;
 mod errcode;
 mod orchestrator;
-mod query;
 mod shared;
-mod translog;
+mod storage;
 mod transport;
 mod utils;
 
@@ -21,10 +20,10 @@ fn main() {
     }
 
     let config = config::Config::new();
-    let collection_manager = collection::new_manager(&config.data_dir);
-    let translog_manager = translog::new_manager();
+    let collection_storage = storage::new_storage(&config.data_dir);
+    let collection_manager = collection::new_manager(collection_storage);
     let orchestrator: Arc<dyn orchestrator::Orchestrator> =
-        orchestrator::new_orchestrator(collection_manager, translog_manager).into();
+        orchestrator::new_orchestrator(collection_manager).into();
 
     let actix_thread = std::thread::spawn(move || run_actix(config, orchestrator));
     actix_thread.join().unwrap();

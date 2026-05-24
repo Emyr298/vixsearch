@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{
-    collection, errcode, orchestrator::CreateCollectionParam, shared, translog, vixerr::Error,
-};
+use crate::{collection, errcode, orchestrator::CreateCollectionParam, shared, vixerr::Error};
 
 pub trait Orchestrator: Send + Sync {
     fn create_collection(&self, param: CreateCollectionParam) -> Result<(), Error>;
@@ -15,25 +13,15 @@ pub trait Orchestrator: Send + Sync {
 
 struct OrchestratorImpl {
     collection_manager: Box<dyn collection::Manager>,
-    translog_manager: Box<dyn translog::Manager>,
 }
 
-pub fn new_orchestrator(
-    collection_manager: Box<dyn collection::Manager>,
-    translog_manager: Box<dyn translog::Manager>,
-) -> Box<dyn Orchestrator> {
-    return Box::new(OrchestratorImpl::new(collection_manager, translog_manager));
+pub fn new_orchestrator(collection_manager: Box<dyn collection::Manager>) -> Box<dyn Orchestrator> {
+    return Box::new(OrchestratorImpl::new(collection_manager));
 }
 
 impl OrchestratorImpl {
-    pub fn new(
-        collection_manager: Box<dyn collection::Manager>,
-        translog_manager: Box<dyn translog::Manager>,
-    ) -> Self {
-        return OrchestratorImpl {
-            collection_manager,
-            translog_manager,
-        };
+    pub fn new(collection_manager: Box<dyn collection::Manager>) -> Self {
+        return OrchestratorImpl { collection_manager };
     }
 }
 
