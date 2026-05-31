@@ -5,6 +5,7 @@ use serde::Deserialize;
 pub struct Config {
     pub address: String,
     pub data_dir: String,
+    pub collection_metadata_filename: String,
 }
 
 impl Config {

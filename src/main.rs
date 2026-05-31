@@ -5,6 +5,7 @@ use dotenvy::dotenv;
 
 mod collection;
 mod config;
+mod di;
 mod errcode;
 mod orchestrator;
 mod shared;
@@ -19,17 +20,13 @@ fn main() {
         println!(".env file is not found");
     }
 
-    let config = config::Config::new();
-    let collection_storage = storage::new_storage(&config.data_dir);
-    let collection_manager = collection::new_manager(collection_storage);
-    let orchestrator: Arc<dyn orchestrator::Orchestrator> =
-        orchestrator::new_orchestrator(collection_manager).into();
+    let app = di::register_dependencies();
 
-    let actix_thread = std::thread::spawn(move || run_actix(config, orchestrator));
+    let actix_thread = std::thread::spawn(move || start_actix(app.config, app.orchestrator));
     actix_thread.join().unwrap();
 }
 
-fn run_actix(config: config::Config, orchestrator: Arc<dyn orchestrator::Orchestrator>) {
+fn start_actix(config: config::Config, orchestrator: Arc<dyn orchestrator::Orchestrator>) {
     let orchestrator_data = web::Data::from(orchestrator);
     actix_web::rt::System::new().block_on(async move {
         HttpServer::new(move || {

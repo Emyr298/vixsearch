@@ -6,6 +6,7 @@ use crate::{collection::Field, shared};
 pub enum InstanceStatus {
     Loading,
     Ready,
+    Deleting,
 }
 
 pub struct CollectionInstance {

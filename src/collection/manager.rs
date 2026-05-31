@@ -11,6 +11,7 @@ use crate::{errcode, shared};
 
 pub trait Storage: Send + Sync {
     fn create(&self, param: CreateStorageParam) -> Result<(), Error>;
+    fn delete(&self, id: &str) -> Result<(), Error>;
 }
 
 pub trait Manager: Send + Sync {
@@ -71,8 +72,30 @@ impl Manager for ManagerImpl {
         Ok(())
     }
 
-    fn delete_collection(&self, _: &str) -> Result<(), Error> {
-        todo!()
+    fn delete_collection(&self, name: &str) -> Result<(), Error> {
+        let instance_ref = self
+            .instances
+            .get(name)
+            .ok_or_else(|| Error::new(errcode::NOT_FOUND, "Collection not found"))?;
+
+        let instance_arc = Arc::clone(instance_ref.value());
+        drop(instance_ref);
+
+        let mut instance = instance_arc.write().unwrap();
+        if instance.status == InstanceStatus::Deleting {
+            return Ok(());
+        }
+
+        // TODO: check if atomic or not -> if not, should consider partial deletion
+        if let Err(e) = self.storage.delete(&instance.id) {
+            return Err(e);
+        }
+
+        instance.status = InstanceStatus::Deleting;
+
+        self.instances.remove(name);
+
+        Ok(())
     }
 
     fn validate_payload(

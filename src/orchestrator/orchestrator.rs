@@ -4,6 +4,8 @@ use crate::{collection, errcode, orchestrator::CreateCollectionParam, shared, vi
 
 pub trait Orchestrator: Send + Sync {
     fn create_collection(&self, param: CreateCollectionParam) -> Result<(), Error>;
+    fn delete_collection(&self, name: &str) -> Result<(), Error>;
+
     fn insert_document(
         &self,
         collection: String,
@@ -49,6 +51,11 @@ impl Orchestrator for OrchestratorImpl {
             ));
         }
 
+        Ok(())
+    }
+
+    fn delete_collection(&self, name: &str) -> Result<(), Error> {
+        self.collection_manager.delete_collection(name)?;
         Ok(())
     }
 }

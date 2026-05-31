@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use actix_web::{HttpResponse, Responder, post, web};
+use actix_web::{HttpResponse, Responder, delete, post, web};
 use validator::Validate;
 
 use crate::{
@@ -14,6 +14,7 @@ use crate::{
 
 pub fn register_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(create_collection);
+    cfg.service(delete_collection);
     cfg.service(insert_document);
 }
 
@@ -35,6 +36,20 @@ async fn create_collection(
         .map_err(|e| http_map_error(e))?;
 
     Ok(HttpResponse::Created().json(utils::http::response_success("SUCCESS".to_string(), ())))
+}
+
+#[delete("/collections/{collection}")]
+async fn delete_collection(
+    collection: web::Path<String>,
+    orchestrator: web::Data<dyn orchestrator::Orchestrator>,
+) -> actix_web::Result<impl Responder> {
+    let collection_name = collection.into_inner();
+
+    orchestrator
+        .delete_collection(&collection_name)
+        .map_err(|e| http_map_error(e))?;
+
+    Ok(HttpResponse::Ok().json(utils::http::response_success("SUCCESS".to_string(), ())))
 }
 
 #[post("/collections/{collection}/documents")]

@@ -122,6 +122,8 @@ fn get_http_status_code(code: &str) -> http::StatusCode {
     match code {
         errcode::SYSTEM_ERROR => http::StatusCode::INTERNAL_SERVER_ERROR,
         errcode::PARSE_ERROR => http::StatusCode::BAD_REQUEST,
+        errcode::NOT_FOUND => http::StatusCode::NOT_FOUND,
+        errcode::EXISTS => http::StatusCode::CONFLICT,
         _ => http::StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
