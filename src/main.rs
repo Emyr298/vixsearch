@@ -4,6 +4,7 @@ use actix_web::{App, HttpServer, web};
 use dotenvy::dotenv;
 
 mod collection;
+mod defaults;
 mod config;
 mod di;
 mod errcode;

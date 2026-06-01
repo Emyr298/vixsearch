@@ -1,7 +1,9 @@
-use config::Environment;
-use serde::Deserialize;
+use config::{Environment, File, FileFormat};
+use serde::{Deserialize};
 
-#[derive(Deserialize)]
+use crate::defaults::ConfigDefaults;
+
+#[derive(Debug, Deserialize)]
 pub struct Config {
     pub address: String,
     pub data_dir: String,
@@ -10,7 +12,10 @@ pub struct Config {
 
 impl Config {
     pub fn new() -> Self {
+        let defaults = serde_json::to_value(ConfigDefaults::default()).expect("failed to serialize defaults");
+
         config::Config::builder()
+            .add_source(File::from_str(&defaults.to_string(), FileFormat::Json))
             .add_source(Environment::default())
             .build()
             .expect("Failed to build config")
