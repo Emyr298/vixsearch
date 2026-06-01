@@ -31,6 +31,7 @@ impl CollectionInstance {
         }
     }
 
+    // TODO: optional constraint, etc in next phases
     pub fn validate_document(&self, document: &HashMap<String, shared::Value>) -> bool {
         for (key, value) in document {
             if !self.field_types.contains_key(key) {
@@ -41,6 +42,11 @@ impl CollectionInstance {
                 return false;
             }
         }
+
+        if document.len() < self.field_types.len() {
+            return false;
+        }
+
         true
     }
 }
