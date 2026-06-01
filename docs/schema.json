@@ -1,0 +1,22 @@
+{
+    "name": "blogs",
+    "fields": [
+        {
+            "name": "title",
+            "type": "string"
+        },
+        {
+            "name": "text",
+            "type": "string"
+        },
+        {
+            "name": "embedding",
+            "type": "vector",
+            "index": {
+                "type": "vector",
+                "dimension": 256,
+                "similarity": "cosine"
+            }
+        }
+    ]
+}

@@ -1,33 +1,53 @@
-mod index;
+use std::sync::Arc;
+
+use actix_web::{App, HttpServer, web};
+use dotenvy::dotenv;
+
+mod collection;
+mod defaults;
+mod config;
+mod di;
+mod errcode;
+mod orchestrator;
+mod shared;
+mod storage;
+mod transport;
+mod utils;
+
+use utils::vixerr;
 
 fn main() {
-    let mut vector_index = index::vector::vector::Index::new(2);
-    vector_index
-        .insert(index::vector::entity::Point::new(
-            "1".to_string(),
-            vec![1.0, 1.0],
-        ))
-        .unwrap();
-
-    vector_index
-        .insert(index::vector::entity::Point::new(
-            "2".to_string(),
-            vec![10.0, 10.0],
-        ))
-        .unwrap();
-
-    vector_index
-        .insert(index::vector::entity::Point::new(
-            "2".to_string(),
-            vec![20.0, 20.0],
-        ))
-        .unwrap();
-
-    let result = vector_index
-        .search(index::vector::param::SearchParam::new(vec![14.0, 14.0], 5))
-        .unwrap();
-
-    for point in result.result {
-        println!("{}:{:?}", point.id, point.pos);
+    if dotenv().is_err() {
+        println!(".env file is not found");
     }
+
+    let app = di::register_dependencies();
+    load_data(&app.orchestrator);
+
+    let actix_thread = std::thread::spawn(move || start_actix(app.config, app.orchestrator));
+    actix_thread.join().unwrap();
+}
+
+fn load_data(orchestrator: &Arc<dyn orchestrator::Orchestrator>) {
+    orchestrator.load_collection().expect("PANIC: failed to load")
+}
+
+fn start_actix(config: config::Config, orchestrator: Arc<dyn orchestrator::Orchestrator>) {
+    let orchestrator_data = web::Data::from(orchestrator);
+    actix_web::rt::System::new().block_on(async move {
+        HttpServer::new(move || {
+            App::new()
+                .app_data(utils::http::error_handler(
+                    errcode::PARSE_ERROR,
+                    "failed to parse request",
+                ))
+                .app_data(orchestrator_data.clone())
+                .configure(transport::http::register_routes)
+        })
+        .bind(config.address)
+        .unwrap()
+        .run()
+        .await
+        .unwrap();
+    });
 }
