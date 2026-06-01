@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{collection::Field, shared};
+use crate::{collection::{Field, entity::Collection}, shared};
 
 #[derive(Debug, PartialEq)]
 pub enum InstanceStatus {
@@ -42,5 +42,16 @@ impl CollectionInstance {
             }
         }
         true
+    }
+}
+
+impl From<Collection> for CollectionInstance {
+    fn from(coll: Collection) -> Self {
+        CollectionInstance {
+            id: coll.id,
+            name: coll.name,
+            status: InstanceStatus::Ready,
+            field_types: coll.fields.into_iter().map(|item| (item.name, item.field_type)).collect()
+        }
     }
 }

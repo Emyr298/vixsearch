@@ -5,6 +5,7 @@ use crate::{collection, errcode, orchestrator::CreateCollectionParam, shared, vi
 pub trait Orchestrator: Send + Sync {
     fn create_collection(&self, param: CreateCollectionParam) -> Result<(), Error>;
     fn delete_collection(&self, name: &str) -> Result<(), Error>;
+    fn load_collection(&self) -> Result<(), Error>;
 
     fn insert_document(
         &self,
@@ -56,6 +57,13 @@ impl Orchestrator for OrchestratorImpl {
 
     fn delete_collection(&self, name: &str) -> Result<(), Error> {
         self.collection_manager.delete_collection(name)?;
+        Ok(())
+    }
+    
+    fn load_collection(&self) -> Result<(), Error> {
+        println!("Loading data...");
+        self.collection_manager.load().expect("failed to load collection");
+        println!("Data loaded");
         Ok(())
     }
 }

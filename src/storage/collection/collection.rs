@@ -1,8 +1,8 @@
 use std::fs::{self, File};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::storage::collection::entity::Collection;
+use crate::storage::collection::entity::{Collection, parse_and_verify_content};
 use crate::utils::vixerr::Error;
 use crate::{collection, errcode};
 
@@ -54,5 +54,36 @@ impl collection::Storage for StorageImpl {
         let path = PathBuf::from(self.data_dir.as_str()).join(id);
         std::fs::remove_dir_all(path).expect("PANIC: Failed to remove collection file on disk");
         Ok(())
+    }
+    
+    fn load(&self) -> Result<Vec<collection::Collection>, Error> {
+        let root_path = Path::new(self.data_dir.as_str());
+        if !root_path.exists() {
+            println!("WARNING: Empty data directory");
+            return Ok(vec![]);
+        }
+
+        let mut colls = Vec::<collection::Collection>::new();
+        let entries = fs::read_dir(root_path).map_err(|_| Error::new(errcode::FATAL_ERROR, "failed to read_dir"))?;
+        for entry in entries {
+            let entry = entry.map_err(|_| Error::new(errcode::FATAL_ERROR, "failed to read entry"))?;
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+
+            let metadata_path = path.join(&self.metadata_filename);
+            if !metadata_path.exists() {
+                return Err(Error::new(errcode::FATAL_ERROR, "missing metadata file"));
+            }
+
+            let content = fs::read_to_string(metadata_path).map_err(|_| Error::new(errcode::FATAL_ERROR, "failed to read metadata"))?;
+            let json_str = parse_and_verify_content(&content)?;
+
+            let coll = serde_json::from_str::<Collection>(json_str).map_err(|_| Error::new(errcode::FATAL_ERROR, "invalid metadata json"))?;
+            colls.push(coll.try_into()?);
+        }
+
+        Ok(colls)
     }
 }

@@ -4,6 +4,7 @@ use std::sync::{Arc, RwLock};
 use dashmap::{DashMap, Entry};
 
 use crate::collection::CollectionInstance;
+use crate::collection::entity::Collection;
 use crate::collection::instance::InstanceStatus;
 use crate::collection::param_result::{CreateCollectionParam, CreateStorageParam};
 use crate::vixerr::Error;
@@ -12,11 +13,13 @@ use crate::{errcode, shared};
 pub trait Storage: Send + Sync {
     fn create(&self, param: CreateStorageParam) -> Result<(), Error>;
     fn delete(&self, id: &str) -> Result<(), Error>;
+    fn load(&self) -> Result<Vec<Collection>, Error>;
 }
 
 pub trait Manager: Send + Sync {
     fn create_collection(&self, param: CreateCollectionParam) -> Result<(), Error>;
     fn delete_collection(&self, name: &str) -> Result<(), Error>;
+    fn load(&self) -> Result<(), Error>;
     fn validate_payload(
         &self,
         collection_name: &str,
@@ -118,5 +121,14 @@ impl Manager for ManagerImpl {
         }
 
         Ok(instance.validate_document(document))
+    }
+    
+    fn load(&self) -> Result<(), Error> {
+        let colls = self.storage.load()?;
+        for coll in colls {
+            let instance = CollectionInstance::from(coll);
+            self.instances.insert(instance.name.clone(), Arc::new(RwLock::new(instance)));
+        }
+        Ok(())
     }
 }

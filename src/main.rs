@@ -21,9 +21,14 @@ fn main() {
     }
 
     let app = di::register_dependencies();
+    load_data(&app.orchestrator);
 
     let actix_thread = std::thread::spawn(move || start_actix(app.config, app.orchestrator));
     actix_thread.join().unwrap();
+}
+
+fn load_data(orchestrator: &Arc<dyn orchestrator::Orchestrator>) {
+    orchestrator.load_collection().expect("PANIC: failed to load")
 }
 
 fn start_actix(config: config::Config, orchestrator: Arc<dyn orchestrator::Orchestrator>) {
