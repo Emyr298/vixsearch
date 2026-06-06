@@ -13,6 +13,7 @@ mod shared;
 mod storage;
 mod transport;
 mod utils;
+mod index;
 
 use utils::vixerr;
 
