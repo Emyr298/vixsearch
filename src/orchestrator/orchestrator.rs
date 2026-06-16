@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, iter::once};
 
-use crate::{collection, errcode, orchestrator::CreateCollectionParam, shared, vixerr::Error};
+use crate::{collection, errcode, index, orchestrator::{CreateCollectionParam, CreateCollectionParamField}, shared, vixerr::Error};
 
 pub trait Orchestrator: Send + Sync {
     fn create_collection(&self, param: CreateCollectionParam) -> Result<(), Error>;
@@ -16,23 +16,50 @@ pub trait Orchestrator: Send + Sync {
 
 struct OrchestratorImpl {
     collection_manager: Box<dyn collection::Manager>,
+    index_manager: Box<dyn index::Manager>,
 }
 
-pub fn new_orchestrator(collection_manager: Box<dyn collection::Manager>) -> Box<dyn Orchestrator> {
-    return Box::new(OrchestratorImpl::new(collection_manager));
+pub fn new_orchestrator(
+    collection_manager: Box<dyn collection::Manager>,
+    index_manager: Box<dyn index::Manager>,
+) -> Box<dyn Orchestrator> {
+    return Box::new(OrchestratorImpl::new(collection_manager, index_manager));
 }
 
 impl OrchestratorImpl {
-    pub fn new(collection_manager: Box<dyn collection::Manager>) -> Self {
-        return OrchestratorImpl { collection_manager };
+    pub fn new(
+        collection_manager: Box<dyn collection::Manager>,
+        index_manager: Box<dyn index::Manager>,
+    ) -> Self {
+        return OrchestratorImpl {
+            collection_manager,
+            index_manager,
+        };
     }
 }
 
 impl Orchestrator for OrchestratorImpl {
     fn create_collection(&self, param: CreateCollectionParam) -> Result<(), Error> {
-        let coll_param = collection::CreateCollectionParam::try_from(param)?;
-        println!("{:?}", coll_param);
+        param.validate()?;
+
+        let enriched_param = CreateCollectionParam {
+            fields: once(CreateCollectionParamField::identifier())
+                .chain(param.fields)
+                .collect(),
+            ..param
+        };
+
+        for field in &enriched_param.fields {
+            self.index_manager.validate_field(&field.field_type, field.index_type)?;
+        }
+
+        let coll_param = collection::CreateCollectionParam::try_from(&enriched_param)?;
         self.collection_manager.create_collection(coll_param)?;
+
+        for field in &enriched_param.fields {
+            self.index_manager.create(field.index_create_param(&enriched_param.name))?;
+        }
+
         Ok(())
     }
 

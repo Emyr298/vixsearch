@@ -1,10 +1,12 @@
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{errcode, vixerr::Error};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub type Document = HashMap<String, Value>;
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
 pub enum ValueType {
     String,
     Int32,
@@ -34,7 +36,7 @@ impl Into<String> for ValueType {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Value {
     String(String),
     Integer(i64),

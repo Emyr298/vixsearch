@@ -1,7 +1,7 @@
-use crate::{shared, utils::vixerr::Error};
+use crate::{index, query as qry, utils::vixerr::Error};
 
-pub trait Buffer<ParamT, ResultT> {
-    fn search(&self, param: ParamT) -> Result<ResultT, Error>;
-    fn insert(&self, id: &str, value: &shared::Value);
+pub trait Buffer: 'static {
+    fn search(&self, query: Box<dyn qry::SearchQuery>) -> Result<index::SearchResult, Error>;
+    fn insert(&self, lookup: Box<dyn index::Lookup>, entry: Box<dyn index::Entry>) -> Result<(), Error>;
     fn flush(&self);
 }

@@ -14,6 +14,7 @@ mod storage;
 mod transport;
 mod utils;
 mod index;
+mod query;
 
 use utils::vixerr;
 

@@ -1,3 +1,3 @@
 mod types;
 
-pub use types::{Value, ValueType};
+pub use types::*;
