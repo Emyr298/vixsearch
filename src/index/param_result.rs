@@ -5,7 +5,6 @@ use crate::{index::IndexType, query, shared::ValueType};
 pub struct CreateParam {
     pub collection: String,
     pub field: String,
-    pub field_type: ValueType,
     pub index_type: IndexType,
 }
 

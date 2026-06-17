@@ -56,6 +56,7 @@ impl Orchestrator for OrchestratorImpl {
         let coll_param = collection::CreateCollectionParam::try_from(&enriched_param)?;
         self.collection_manager.create_collection(coll_param)?;
 
+        // TODO: what if index is partially created/updated? whole collection must be locked or queue (async indexing) or smthZ
         for field in &enriched_param.fields {
             self.index_manager.create(field.index_create_param(&enriched_param.name))?;
         }
@@ -77,6 +78,12 @@ impl Orchestrator for OrchestratorImpl {
                 errcode::PARSE_ERROR,
                 "Document validation failed",
             ));
+        }
+
+        // TODO: what if some indexes fail?
+        // TODO: parallelize
+        for (field, value) in document {
+            self.index_manager.insert(param);
         }
 
         Ok(())

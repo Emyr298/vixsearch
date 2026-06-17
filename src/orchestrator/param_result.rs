@@ -89,7 +89,6 @@ impl CreateCollectionParamField {
         index::CreateParam {
             collection: collection.to_string(),
             field: self.name.clone(),
-            field_type: self.field_type.clone(),
             index_type: self.index_type,
         }
     }
