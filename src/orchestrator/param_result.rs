@@ -29,6 +29,17 @@ impl CreateCollectionParam {
 
         Ok(())
     }
+
+    pub fn index_create_param<'a>(&'a self) -> index::CreateParam<'a> {
+        index::CreateParam { collection: &self.name, fields: self.fields
+            .iter()
+            .map(|f| index::CreateParamField {
+                name: &f.name,
+                index_type: f.index_type,
+            })
+            .collect()
+        }
+    }
 }
 
 impl TryFrom<&CreateCollectionParam> for collection::CreateCollectionParam {
@@ -84,15 +95,15 @@ impl CreateCollectionParamField {
     }
 }
 
-impl CreateCollectionParamField {
-    pub fn index_create_param(&self, collection: &str) -> index::CreateParam {
-        index::CreateParam {
-            collection: collection.to_string(),
-            field: self.name.clone(),
-            index_type: self.index_type,
-        }
-    }
-}
+// impl CreateCollectionParamField {
+//     pub fn index_create_param<'a>(&'a self, collection: &'a str) -> index::CreateParam {
+//         index::CreateParam {
+//             collection: collection,
+//             field: &self.name,
+//             index_type: self.index_type,
+//         }
+//     }
+// }
 
 impl TryFrom<&CreateCollectionParamField> for collection::Field {
     type Error = Error;

@@ -1,27 +1,20 @@
-use std::any::Any;
+use crate::{shared::Document};
 
-use crate::{index, shared::Document};
-
-pub fn document_result(document: Document) -> index::SearchResult {
-    index::SearchResult {
-        detail: Box::new(document),
-    }
+pub struct CreateParam<'a> {
+    pub collection: &'a str,
 }
 
-impl index::SearchResultDetail for Document {
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
+pub struct GetParam<'a> {
+    pub collection: &'a str,
+    pub id: &'a str,
 }
 
-impl index::Entry for Document {
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
+pub struct InsertParam<'a> {
+    pub collection: &'a str,
+    pub id: &'a str,
+    pub document: &'a Document,
 }
 
-impl index::Lookup for String {
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
+pub struct DeleteParam<'a> {
+    pub collection: &'a str,
 }

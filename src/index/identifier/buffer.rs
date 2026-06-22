@@ -1,62 +1,43 @@
 use dashmap::{DashMap, Entry};
 
-use crate::{errcode, index::{self, identifier::param_result::{document_result}, layered::Buffer}, query as qry, shared::{Document, Value}, utils::vixerr::Error};
+use crate::{errcode, index, query as qry, shared::{Document, Value}, utils::vixerr::Error};
 
-pub struct IdentifierBuffer {
+pub struct Buffer {
     buffer_map: DashMap<String, Document>
 }
 
-impl IdentifierBuffer {
+impl Buffer {
     pub fn new() -> Self {
-        IdentifierBuffer{
+        Buffer{
             buffer_map: DashMap::new()
         }
     }
 }
 
 // TODO: segment lookup
-// TODO: constraint checking, but may be outside of this insert function (before translog)
-impl Buffer for IdentifierBuffer {
-    fn search(&self, param: Box<dyn qry::SearchQuery>) -> Result<index::SearchResult, Error> {
-        let query = param
-            .into_any()
-            .downcast::<qry::EqualityQuery>()
-            .map_err(|_| Error::new(errcode::SYSTEM_ERROR, "invalid query"))?;
-
-        let Value::String(id) = query.value else {
-            return Err(Error::new(errcode::ARGUMENT_ERROR, "id must be a string"));
-        };
-
+// TODO: constraint checking, but may be outside of this insert function (before translog, when translog is added ofc)
+impl Buffer {
+    pub fn get(&self, id: &str) -> Result<Document, Error> {
         let doc_ref = self.buffer_map
-            .get(&id)
+            .get(id)
             .ok_or_else(|| Error::new(errcode::NOT_FOUND, "document not found"))?;
 
         let doc = doc_ref.clone();
-        Ok(document_result(doc))
+        Ok(doc)
     }
 
-    fn insert(&self, param_lookup: Box<dyn index::Lookup>, param_entry: Box<dyn index::Entry>) -> Result<(), Error> {
-        let id = param_lookup
-            .into_any()
-            .downcast::<String>()
-            .map_err(|_| Error::new(errcode::SYSTEM_ERROR, "invalid query"))?;
-
-        let document = param_entry
-            .into_any()
-            .downcast::<Document>()
-            .map_err(|_| Error::new(errcode::SYSTEM_ERROR, "invalid query"))?;
-
-        // Note: id is expected to be locked already, so there won't be race condition of insertion
-        let doc_entry = self.buffer_map.entry(*id);
-        if let Entry::Occupied(_) = &doc_entry {
+    // id is expected to be locked when using this function
+    pub fn insert(&self, id: &str, document: &Document) -> Result<(), Error> {
+        // as id is locked, there won't be race condition between validation and insert
+        if !matches!(self.get(id), Err(e) if e.code == errcode::NOT_FOUND) {
             return Err(Error::new(errcode::EXISTS, "Document with same id already exists"));
         }
 
-        doc_entry.insert(*document);
+        self.buffer_map.insert(id.to_string(), document.clone());
         Ok(())
     }
 
-    fn flush(&self) {
+    pub fn flush(&self) {
         todo!()
     }
 }

@@ -4,7 +4,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::{errcode, vixerr::Error};
 
+pub const IDENTIFIER_FIELD: &str = "_id";
+
 pub type Document = HashMap<String, Value>;
+
+pub fn get_id(document: &Document) -> Result<String, Error> {
+    let Some(id_value) = document.get(IDENTIFIER_FIELD) else {
+        return Err(Error::new(errcode::FATAL_ERROR, "id not in document"));
+    };
+
+    let Value::String(id) = id_value else {
+        return Err(Error::new(errcode::FATAL_ERROR, "id must be a string"));
+    };
+
+    Ok(id.clone())
+}
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
 pub enum ValueType {

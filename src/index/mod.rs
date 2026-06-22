@@ -1,4 +1,3 @@
-mod layered;
 pub mod identifier;
 mod entity;
 mod manager;

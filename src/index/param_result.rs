@@ -1,27 +1,36 @@
 use std::any::Any;
 
-use crate::{index::IndexType, query, shared::ValueType};
+use crate::{index::IndexType, query, shared::{Document, ValueType}};
 
-pub struct CreateParam {
-    pub collection: String,
-    pub field: String,
+pub struct CreateParam<'a> {
+    pub collection: &'a str,
+    pub fields: Vec<CreateParamField<'a>>,
+}
+
+pub struct CreateParamField<'a> {
+    pub name: &'a str,
     pub index_type: IndexType,
 }
 
-impl Into<TypeCreateParam> for CreateParam {
-    fn into(self) -> TypeCreateParam {
-        TypeCreateParam { collection: self.collection, field: self.field }
-    }
-}
+// impl Into<TypeCreateParam> for CreateParam {
+//     fn into(self) -> TypeCreateParam {
+//         TypeCreateParam { collection: self.collection, field: self.field }
+//     }
+// }
 
 pub struct TypeCreateParam {
     pub collection: String,
     pub field: String,
 }
 
-pub struct DeleteParam {
-    pub collection: String,
-    pub field: String,
+pub struct DeleteParam<'a> {
+    pub collection: &'a str,
+    pub field: &'a str,
+}
+
+pub struct GetParam<'a> {
+    pub collection: &'a str,
+    pub id: &'a str,
 }
 
 pub struct SearchParam {
@@ -30,11 +39,9 @@ pub struct SearchParam {
     pub query: Box<dyn query::SearchQuery>,
 }
 
-pub struct InsertParam {
-    pub collection: String,
-    pub field: String,
-    pub lookup: Box<dyn Lookup>,
-    pub entry: Box<dyn Entry>,
+pub struct InsertParam<'a> {
+    pub collection: &'a str,
+    pub document: &'a Document,
 }
 
 pub trait Lookup {
