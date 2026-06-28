@@ -4,6 +4,7 @@ use std::fmt::Display;
 pub struct Error {
     pub code: String,
     pub message: String,
+    pub source: Option<Box<dyn std::error::Error>>
 }
 
 impl Error {
@@ -11,7 +12,26 @@ impl Error {
         Self {
             code: code.into(),
             message: message.into(),
+            source: Option::None,
         }
+    }
+
+    pub fn code(code: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: "".to_string(),
+            source: Option::None,
+        }
+    }
+
+    pub fn message(mut self, msg: impl Into<String>) -> Self {
+        self.message = msg.into();
+        self
+    }
+
+    pub fn wrap(mut self, source: impl std::error::Error + 'static) -> Self {
+        self.source = Some(Box::new(source));
+        self
     }
 }
 
