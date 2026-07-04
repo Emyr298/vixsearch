@@ -2,136 +2,128 @@ use std::{fs::{File, OpenOptions}, io::{Seek, Write}, path::Path};
 
 use crate::{errcode, shared::Document, utils::vixerr::Error};
 
+const page_header_size: usize = 9;
+
 pub struct Writer {
     base_dir: String,
     segment_id: String,
-    page_size: usize,
+    min_document_block_size: usize,
+    min_document_content_size: usize,
 }
 
 impl Writer {
-    pub fn write(&self, id: Vec<&str>, doc: Vec<Document>) -> Result<(), Error> {
-        let doc_path = Path::new(&self.base_dir).join(format!("doc_{}", &self.segment_id));
-        let mut doc_file = OpenOptions::new()
+    pub fn new(base_dir: String, segment_id: String, min_document_block_size: usize) -> Self {
+        Self {
+            base_dir,
+            segment_id,
+            min_document_block_size,
+            min_document_content_size: min_document_block_size - page_header_size,
+        }
+    }
+
+    pub fn write(&self, ids: Vec<&str>, docs: Vec<Document>) -> Result<(), Error> {
+        let file_path = Path::new(&self.base_dir).join(format!("log_{}", &self.segment_id));
+        let file_result = OpenOptions::new()
             .append(true)
             .create(true)
-            .open(doc_path)
-            .map_err(|e| Error::code(errcode::FATAL_ERROR).wrap(e))?;
+            .open(file_path);
 
-        let log_path = Path::new(&self.base_dir).join(format!("log_{}", &self.segment_id));
-        let mut log_file = OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(log_path)
-            .map_err(|e| Error::code(errcode::FATAL_ERROR).wrap(e))?;
+        let mut file = match file_result {
+            Ok(val) => val,
+            Err(err) => return Error::code(errcode::FATAL_ERROR)
+                .message("failed to open file")
+                .wrap(err)
+                .throw(),
+        };
 
-        // header
-        self.write_header(&mut log_file)?;
-
-        // documents
-
-
-        
-
-        
+        let block_offsets = self.write_documents(&mut file, &ids, &docs)?;
+        self.write_footer(&mut file, block_offsets)?;
 
         Ok(())
     }
 
-    // TODO: bloomfilter
-    fn write_header(&self, log_file: &mut File) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn write_block(&self, ids: Vec<&str>, docs: Vec<Document>, log_file: &mut File, doc_file: &mut File) -> Result<(), Error> {
-        let mut order: Vec<u64> = Vec::new();
-
-        let mut block = Block::new(self.page_size.clone());
+    fn write_documents(&self, file: &mut File, ids: &Vec<&str>, docs: &Vec<Document>) -> Result<Vec<u64>, Error> {
+        let mut block_offsets: Vec<u64> = Vec::new();
+        let mut block_content: Vec<u8> = Vec::new();
         for (id, doc) in ids.iter().zip(docs.iter()) {
-            let doc_json = serde_json::to_string(doc)
-                .map_err(|e| Error::code(errcode::FATAL_ERROR).message("failed to convert doc into json").wrap(e))?;
+            let doc_json = match serde_json::to_string(doc) {
+                Ok(v) => v,
+                Err(err) => return Error::code(errcode::FATAL_ERROR)
+                    .message("failed to convert doc into json")
+                    .wrap(err)
+                    .throw(),
+            };
 
             let id_bytes = id.as_bytes();
             let doc_json_bytes = doc_json.as_bytes();
-            let total_len = id_bytes.len() + 1 + doc_json_bytes.len();
 
-            if total_len > block.size_left() {
-                if block.is_empty() {
-                    // put partial into current page and continue to new page
-                }
-
-                // flush current block
-                let offset = log_file
-                    .stream_position()
-                    .map_err(|e| Error::code(errcode::FATAL_ERROR).message("invalid offset").wrap(e))?;
-                order.push(offset);
-
-                let buf = block.write()?;
-                log_file.write_all(&buf);
-
-                block = Block::new(self.page_size.clone());
+            if block_content.len() >= self.min_document_content_size {
+                let offset = self.write_document_block(file, block_content.as_slice())?;
+                block_offsets.push(offset);
+                block_content = Vec::new();
             }
 
-            block.extend(id_bytes);
-            block.push(b':');
-            block.extend(doc_json_bytes);
+            let total_len = id_bytes.len() + 1 + doc_json_bytes.len();
+            block_content.extend((total_len as u64).to_le_bytes());
+            block_content.extend(id_bytes);
+            block_content.push(b':');
+            block_content.extend(doc_json_bytes);
+        }
+
+        if block_content.len() > 0 {
+            let offset = self.write_document_block(file, block_content.as_slice())?;
+            block_offsets.push(offset);
+        }
+
+        Ok(block_offsets)
+    }
+
+    // <BLCK 4 byte><CRC 4 byte><CONTENT>
+    fn write_document_block(&self, file: &mut File, content_bytes: &[u8]) -> Result<u64, Error> {
+        let checksum = crc32fast::hash(&content_bytes);
+
+        let mut buf: Vec<u8> = Vec::new();
+        buf.extend_from_slice(b"BLCK");
+        buf.extend_from_slice(&checksum.to_le_bytes());
+        buf.extend_from_slice(&content_bytes);
+
+        if let Err(err) = file.write_all(&buf) {
+            return Error::code(errcode::FATAL_ERROR)
+                .message("failed to write_all")
+                .wrap(err)
+                .throw();
+        }
+
+        let offset = match file.stream_position() {
+            Ok(val) => val,
+            Err(err) => return Error::code(errcode::FATAL_ERROR)
+                .message("invalid offset")
+                .wrap(err)
+                .throw(),
+        };
+
+        Ok(offset)
+    }
+
+    // TODO: bloomfilter
+    // <FOOT 4 byte><CRC 4 byte><OFFSETS LEN><OFFSETS><BLOOMFILTER LEN><BLOOMFILTER>
+    fn write_footer(&self, file: &mut File, block_offsets: Vec<u64>) -> Result<(), Error> {
+        let offsets_bytes = rmp_serde::to_vec(&block_offsets).unwrap();
+        let checksum = crc32fast::hash(&offsets_bytes);
+
+        let mut buf: Vec<u8> = Vec::new();
+        buf.extend_from_slice(b"FOOT");
+        buf.extend_from_slice(&checksum.to_le_bytes());
+        buf.extend((offsets_bytes.len() as u64).to_le_bytes());
+        buf.extend_from_slice(&offsets_bytes);
+
+        if let Err(err) = file.write_all(&buf) {
+            return Error::code(errcode::FATAL_ERROR)
+                .message("failed to write_all")
+                .wrap(err)
+                .throw();
         }
 
         Ok(())
-    }
-}
-
-struct Block {
-    total_size: usize,
-    content_size: usize,
-    content_buffer: Vec<u8>,
-    has_next: bool,
-}
-
-impl Block {
-    fn new(size: usize) -> Self {
-        Self {
-            total_size: size,
-            content_size: size - 9,
-            content_buffer: Vec::new(),
-            has_next: false,
-        }
-    }
-
-    fn extend(&mut self, bytes: &[u8]) {
-        self.content_buffer.extend_from_slice(bytes);
-    }
-
-    fn push(&mut self, byte: u8) {
-        self.content_buffer.push(byte);
-    }
-
-    fn is_empty(&self) -> bool {
-        self.content_buffer.len() == 0
-    }
-
-    fn size_left(&self) -> usize {
-        self.content_size - self.content_buffer.len()
-    }
-
-    fn mark_next(&mut self) {
-        self.has_next = true;
-    }
-
-    // <PAGE 4 byte><CRC 4 byte><HASNEXT 1 byte>
-    fn write(self) -> Result<Vec<u8>, Error> {
-        if self.size_left() < 0 {
-            return Err(Error::code(errcode::FATAL_ERROR).message("content exceeds block size"));
-        }
-
-        let mut buf: Vec<u8> = Vec::new();
-
-        let checksum = crc32fast::hash(&self.content_buffer);
-
-        buf.extend_from_slice(b"PAGE");
-        buf.extend_from_slice(&checksum.to_le_bytes());
-        buf.push(u8::from(self.has_next));
-        buf.extend_from_slice(&self.content_buffer);
-
-        buf
     }
 }

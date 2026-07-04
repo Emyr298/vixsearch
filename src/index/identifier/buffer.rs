@@ -38,6 +38,6 @@ impl Buffer {
     }
 
     pub fn flush(&self) {
-        todo!()
+        
     }
 }

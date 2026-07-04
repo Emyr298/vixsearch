@@ -33,6 +33,10 @@ impl Error {
         self.source = Some(Box::new(source));
         self
     }
+
+    pub fn throw<T>(self) -> Result<T, Self> {
+        Err(self)
+    }
 }
 
 impl Display for Error {
