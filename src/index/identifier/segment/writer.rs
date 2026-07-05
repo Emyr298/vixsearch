@@ -1,31 +1,41 @@
 use std::{fs::{File, OpenOptions}, io::{Seek, Write}, path::Path};
 
+use fastbloom::BloomFilter;
+
 use crate::{errcode, shared::Document, utils::vixerr::Error};
 
-const page_header_size: usize = 9;
+const BLOCK_HEADER_SIZE: usize = 16;
 
 pub struct Writer {
     base_dir: String,
     segment_id: String,
     min_document_block_size: usize,
     min_document_content_size: usize,
+    false_positive_probability: f64,
 }
 
 impl Writer {
-    pub fn new(base_dir: String, segment_id: String, min_document_block_size: usize) -> Self {
+    pub fn new(base_dir: String, segment_id: String, min_document_block_size: usize, false_positive_probability: f64) -> Self {
         Self {
             base_dir,
             segment_id,
             min_document_block_size,
-            min_document_content_size: min_document_block_size - page_header_size,
+            min_document_content_size: min_document_block_size - BLOCK_HEADER_SIZE,
+            false_positive_probability,
         }
     }
 
     pub fn write(&self, ids: Vec<&str>, docs: Vec<Document>) -> Result<(), Error> {
+        if ids.len() == 0 || ids.len() != docs.len() {
+            return Error::code(errcode::FATAL_ERROR)
+                .message("invalid ids and docs")
+                .throw();
+        }
+
         let file_path = Path::new(&self.base_dir).join(format!("log_{}", &self.segment_id));
         let file_result = OpenOptions::new()
             .append(true)
-            .create(true)
+            .create_new(true)
             .open(file_path);
 
         let mut file = match file_result {
@@ -37,7 +47,15 @@ impl Writer {
         };
 
         let block_offsets = self.write_documents(&mut file, &ids, &docs)?;
-        self.write_footer(&mut file, block_offsets)?;
+        let metadata_offset = self.write_metadata(&mut file, ids, block_offsets)?;
+        self.write_footer(&mut file, metadata_offset)?;
+
+        if let Err(err) = file.sync_all() {
+            return Error::code(errcode::FATAL_ERROR)
+                .message("failed to flush file")
+                .wrap(err)
+                .throw();
+        }
 
         Ok(())
     }
@@ -78,21 +96,16 @@ impl Writer {
         Ok(block_offsets)
     }
 
-    // <BLCK 4 byte><CRC 4 byte><CONTENT>
+    // <BLCK 4 byte><CRC 4 byte><CONTENT LEN 8 byte><CONTENT>
     fn write_document_block(&self, file: &mut File, content_bytes: &[u8]) -> Result<u64, Error> {
         let checksum = crc32fast::hash(&content_bytes);
+        let content_len = (content_bytes.len() as u64).to_le_bytes();
 
         let mut buf: Vec<u8> = Vec::new();
         buf.extend_from_slice(b"BLCK");
         buf.extend_from_slice(&checksum.to_le_bytes());
+        buf.extend_from_slice(content_len.as_slice());
         buf.extend_from_slice(&content_bytes);
-
-        if let Err(err) = file.write_all(&buf) {
-            return Error::code(errcode::FATAL_ERROR)
-                .message("failed to write_all")
-                .wrap(err)
-                .throw();
-        }
 
         let offset = match file.stream_position() {
             Ok(val) => val,
@@ -102,20 +115,93 @@ impl Writer {
                 .throw(),
         };
 
+        if let Err(err) = file.write_all(&buf) {
+            return Error::code(errcode::FATAL_ERROR)
+                .message("failed to write_all")
+                .wrap(err)
+                .throw();
+        }
+
         Ok(offset)
     }
 
-    // TODO: bloomfilter
-    // <FOOT 4 byte><CRC 4 byte><OFFSETS LEN><OFFSETS><BLOOMFILTER LEN><BLOOMFILTER>
-    fn write_footer(&self, file: &mut File, block_offsets: Vec<u64>) -> Result<(), Error> {
+    // <META 4 byte><CRC 4 byte><OFFSETS LEN 8 byte><OFFSETS><BLOOMFILTER HASH CNT 4 byte><BLOOMFILTER BITS LEN 8 byte><BF BITS>
+    // <SMALLEST KEY LEN><SMALLEST KEY><BIGGEST KEY LEN><BIGGEST KEY>
+    fn write_metadata(&self, file: &mut File, ids: Vec<&str>, block_offsets: Vec<u64>) -> Result<u64, Error> {
         let offsets_bytes = rmp_serde::to_vec(&block_offsets).unwrap();
-        let checksum = crc32fast::hash(&offsets_bytes);
+        let offsets_len = (offsets_bytes.len() as u64).to_le_bytes();
 
+        let filter = BloomFilter::with_false_pos(self.false_positive_probability)
+            .items(ids.iter());
+
+        let filter_hashes = filter.num_hashes().to_le_bytes();
+
+        let filter_bytes: Vec<u8> = filter
+            .iter()
+            .flat_map(|block| block.to_le_bytes()) // u64
+            .collect();
+        let filter_len = (filter_bytes.len() as u64).to_le_bytes();
+
+        let Some(smallest_key) = ids.first() else {
+            return Error::code(errcode::FATAL_ERROR)
+                .message("invalid first key")
+                .throw();
+        };
+        let smallest_key_len = (smallest_key.len() as u64).to_le_bytes();
+
+        let Some(biggest_key) = ids.last() else {
+            return Error::code(errcode::FATAL_ERROR)
+                .message("invalid last key")
+                .throw();
+        };
+        let biggest_key_len = (biggest_key.len() as u64).to_le_bytes();
+
+        let content_bytes: Vec<u8> = [
+            offsets_len.as_slice(),
+            offsets_bytes.as_slice(),
+            filter_hashes.as_slice(),
+            filter_len.as_slice(),
+            filter_bytes.as_slice(),
+            smallest_key_len.as_slice(),
+            smallest_key.as_bytes(),
+            biggest_key_len.as_slice(),
+            biggest_key.as_bytes(),
+        ].concat();
+
+        let checksum = crc32fast::hash(&content_bytes);
+
+        let mut buf: Vec<u8> = Vec::new();
+        buf.extend_from_slice(b"META");
+        buf.extend_from_slice(&checksum.to_le_bytes());
+        buf.extend_from_slice(&content_bytes);
+
+        let offset = match file.stream_position() {
+            Ok(val) => val,
+            Err(err) => return Error::code(errcode::FATAL_ERROR)
+                .message("invalid offset")
+                .wrap(err)
+                .throw(),
+        };
+
+        if let Err(err) = file.write_all(&buf) {
+            return Error::code(errcode::FATAL_ERROR)
+                .message("failed to write_all")
+                .wrap(err)
+                .throw();
+        }
+
+        Ok(offset)
+    }
+
+    // <FOOT 4 byte><CRC 4 byte><METADATA OFFSET 8 byte>
+    fn write_footer(&self, file: &mut File, metadata_offset: u64) -> Result<(), Error> {
+        let offset_bytes = metadata_offset.to_le_bytes();
+        let checksum = crc32fast::hash(&offset_bytes);
+        
         let mut buf: Vec<u8> = Vec::new();
         buf.extend_from_slice(b"FOOT");
         buf.extend_from_slice(&checksum.to_le_bytes());
-        buf.extend((offsets_bytes.len() as u64).to_le_bytes());
-        buf.extend_from_slice(&offsets_bytes);
+        buf.extend_from_slice(&offset_bytes);
 
         if let Err(err) = file.write_all(&buf) {
             return Error::code(errcode::FATAL_ERROR)
