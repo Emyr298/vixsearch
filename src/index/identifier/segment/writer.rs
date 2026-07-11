@@ -2,9 +2,7 @@ use std::{fs::{File, OpenOptions}, io::{Seek, Write}, path::Path};
 
 use fastbloom::BloomFilter;
 
-use crate::{errcode, shared::Document, utils::vixerr::Error};
-
-const BLOCK_HEADER_SIZE: usize = 16;
+use crate::{errcode, index::identifier::segment::constants::{BLOCK_HEADER_SIZE, FOOTER_MAGIC, METADATA_MAGIC}, shared::Document, utils::vixerr::Error};
 
 pub struct Writer {
     base_dir: String,
@@ -21,7 +19,7 @@ impl Writer {
             segment_id,
             min_document_block_size,
             min_document_content_size: min_document_block_size - BLOCK_HEADER_SIZE,
-            false_positive_probability,
+            false_positive_probability
         }
     }
 
@@ -125,7 +123,8 @@ impl Writer {
         Ok(offset)
     }
 
-    // <META 4 byte><CRC 4 byte><OFFSETS LEN 8 byte><OFFSETS><BLOOMFILTER HASH CNT 4 byte><BLOOMFILTER BITS LEN 8 byte><BF BITS>
+    // <META 4 byte><CRC 4 byte><METADATA LEN 8 byte><OFFSETS LEN 8 byte><OFFSETS>
+    // <BLOOMFILTER HASH CNT 4 byte><BLOOMFILTER BITS LEN 8 byte><BF BITS>
     // <SMALLEST KEY LEN><SMALLEST KEY><BIGGEST KEY LEN><BIGGEST KEY>
     fn write_metadata(&self, file: &mut File, ids: Vec<&str>, block_offsets: Vec<u64>) -> Result<u64, Error> {
         let offsets_bytes = rmp_serde::to_vec(&block_offsets).unwrap();
@@ -156,7 +155,19 @@ impl Writer {
         };
         let biggest_key_len = (biggest_key.len() as u64).to_le_bytes();
 
+        let content_size = offsets_len.len()
+            + offsets_bytes.len()
+            + filter_hashes.len()
+            + filter_len.len()
+            + filter_bytes.len()
+            + smallest_key_len.len()
+            + smallest_key.len()
+            + biggest_key_len.len()
+            + biggest_key.len();
+        let content_len = (content_size as u64).to_le_bytes();
+
         let content_bytes: Vec<u8> = [
+            content_len.as_slice(),
             offsets_len.as_slice(),
             offsets_bytes.as_slice(),
             filter_hashes.as_slice(),
@@ -171,7 +182,7 @@ impl Writer {
         let checksum = crc32fast::hash(&content_bytes);
 
         let mut buf: Vec<u8> = Vec::new();
-        buf.extend_from_slice(b"META");
+        buf.extend_from_slice(METADATA_MAGIC);
         buf.extend_from_slice(&checksum.to_le_bytes());
         buf.extend_from_slice(&content_bytes);
 
@@ -199,7 +210,7 @@ impl Writer {
         let checksum = crc32fast::hash(&offset_bytes);
         
         let mut buf: Vec<u8> = Vec::new();
-        buf.extend_from_slice(b"FOOT");
+        buf.extend_from_slice(FOOTER_MAGIC);
         buf.extend_from_slice(&checksum.to_le_bytes());
         buf.extend_from_slice(&offset_bytes);
 
