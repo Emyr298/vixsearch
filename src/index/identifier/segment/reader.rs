@@ -1,17 +1,21 @@
 use std::{fs::{File, OpenOptions}, os::unix::fs::FileExt, path::Path};
 
+use fastbloom::BloomFilter;
+
 use crate::{errcode, index::identifier::segment::constants::{BLOCK_HEADER_SIZE, FOOTER_MAGIC, FOOTER_SIZE, METADATA_MAGIC}, utils::vixerr::Error};
-
-
 
 pub struct Reader {
     base_dir: String,
     segment_id: String,
+    filter: BloomFilter,
+    sorted_block_offsets: Vec<u64>,
+    smallest_key: String,
+    biggest_key: String,
     file: File,
 }
 
 impl Reader {
-    pub fn new(base_dir: String, segment_id: String) -> Result<Self, Error> {
+    pub fn new(base_dir: String, segment_id: String, max_metadata_content_len: usize) -> Result<Self, Error> {
         let file_path = Path::new(&base_dir).join(format!("log_{}", &segment_id));
         let file_result = OpenOptions::new()
             .read(true)
@@ -26,18 +30,29 @@ impl Reader {
         };
 
         let metadata_offset = get_metadata_offset(&file)?;
-        // let 
+        let (
+            offsets,
+            filter_hash_cnt,
+            filter_bits,
+            smallest_key,
+            biggest_key
+        ) = get_metadata(&file, metadata_offset, max_metadata_content_len)?;
+
+        let filter = BloomFilter::from_vec(filter_bits).hashes(filter_hash_cnt);
 
         Ok(Self {
             base_dir,
             segment_id,
+            filter,
+            sorted_block_offsets: offsets,
+            smallest_key,
+            biggest_key,
             file,
         })
     }
-
 }
 
-fn get(file: &File, metadata_offset: u64, max_metadata_content_len: usize) -> Result<(), Error> {
+fn get_metadata(file: &File, metadata_offset: u64, max_metadata_content_len: usize) -> Result<(Vec<u64>, u32, Vec<u64>, String, String), Error> {
     let mut metadata_header = [0u8; BLOCK_HEADER_SIZE];
     if let Err(err) = file.read_exact_at(&mut metadata_header, metadata_offset) {
         return Error::code(errcode::FATAL_ERROR)
@@ -84,12 +99,40 @@ fn get(file: &File, metadata_offset: u64, max_metadata_content_len: usize) -> Re
     let offsets_len: usize = u64::from_le_bytes(metadata_content[0..8].try_into().unwrap())
         .try_into()
         .unwrap();
-
     let offsets: Vec<u64> = rmp_serde::from_slice(&metadata_content[8..(8+offsets_len)]).unwrap();
+
+    let filter_hash_cnt_offset = 8 + offsets_len;
+    let filter_hash_cnt = u32::from_le_bytes(metadata_content[filter_hash_cnt_offset..(filter_hash_cnt_offset+4)].try_into().unwrap());
     
+    let filter_len_offset = filter_hash_cnt_offset + 4;
+    let filter_len: usize = u64::from_le_bytes(metadata_content[filter_len_offset..filter_len_offset+8].try_into().unwrap())
+        .try_into()
+        .unwrap();
 
+    let filter_bytes_offset = filter_len_offset + 8;
+    let filter_bytes = &metadata_content[filter_bytes_offset..(filter_bytes_offset + (filter_len as usize))];
+    let filter_bits: Vec<u64> = filter_bytes
+        .chunks_exact(8)
+        .map(|chunk| u64::from_le_bytes(chunk.try_into().unwrap()))
+        .collect();
 
-    Ok(())
+    let smallest_key_len_offset = filter_bytes_offset + (filter_len as usize);
+    let smallest_key_len: usize = u64::from_le_bytes(metadata_content[smallest_key_len_offset..smallest_key_len_offset+8].try_into().unwrap())
+        .try_into()
+        .unwrap();
+
+    let smallest_key_offset = smallest_key_len_offset + 8;
+    let smallest_key = str::from_utf8(&metadata_content[smallest_key_offset..(smallest_key_offset + smallest_key_len)]).unwrap().to_string();
+
+    let biggest_key_len_offset = smallest_key_offset + smallest_key_len;
+    let biggest_key_len: usize = u64::from_le_bytes(metadata_content[biggest_key_len_offset..biggest_key_len_offset+8].try_into().unwrap())
+        .try_into()
+        .unwrap();
+
+    let biggest_key_offset = biggest_key_len_offset + 8;
+    let biggest_key = str::from_utf8(&metadata_content[biggest_key_offset..(biggest_key_offset + biggest_key_len)]).unwrap().to_string();
+
+    Ok((offsets, filter_hash_cnt, filter_bits, smallest_key, biggest_key))
 }
 
 fn get_metadata_offset(file: &File) -> Result<u64, Error> {
