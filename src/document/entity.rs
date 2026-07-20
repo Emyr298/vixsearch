@@ -1,40 +1,26 @@
 use std::{collections::HashMap, fmt::{Display, Formatter, Result}};
 
+use serde::{Deserialize, Serialize};
+
 use crate::shared::Value;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct CollectionID(pub String);
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SegmentID(pub String);
-
-impl Display for SegmentID {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        write!(f, "{}", self.0)
-    }
+pub fn key_from_id(id: &str) -> String {
+    format!("id_{}", id)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct DocumentID(pub String);
-
-impl Display for DocumentID {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        write!(f, "{}", self.0)
-    }
+pub fn key_from_seq_id(seq_id: &str) -> String {
+    format!("seq_{}", seq_id)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct DocumentSeqID(pub u64);
-
-impl Display for DocumentSeqID {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
-    pub id: DocumentID,
-    pub seq_id: DocumentSeqID,
+    pub id: String,
+    pub seq_id: String,
     pub payload: HashMap<String, Value>,
+}
+
+impl Display for Document {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        write!(f, "{:?}", self)
+    }
 }

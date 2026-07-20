@@ -1,0 +1,1 @@
+pub const FLUSH_ON_PROGRESS: &str = "FLUSH_ON_PROGRESS";
