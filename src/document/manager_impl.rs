@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 
-use crate::{document::{entity::{CollectionID, DocumentID, DocumentSeqID, SegmentID}, errors::{COLLECTION_NOT_FOUND, DOCUMENT_NOT_FOUND}, lookup_impl::{IDLookup, SeqIDLookup}, manager::{Lookup, Manager, Port}, state::{CollectionState, SegmentState}}, errcode, shared::Document, utils::{vixalg, vixerr::Error}};
+use crate::{document::{entity::{CollectionID, Document, DocumentID, DocumentSeqID, SegmentID}, errors::{COLLECTION_NOT_FOUND, DOCUMENT_NOT_FOUND}, lookup_impl::{IDLookup, SeqIDLookup}, manager::{Lookup, Manager, Port}, state::{CollectionState, SegmentState}}, errcode, utils::{vixalg, vixerr::Error}};
 
 pub struct ManagerImpl {
     adapter: Box<dyn Port>,
@@ -29,21 +29,35 @@ impl ManagerImpl {
 }
 
 impl Manager for ManagerImpl {
-    fn get_by_id(&self, collection_id: &str, document_id: &str) -> Result<Document, Error> {
-        let document_id = DocumentID(document_id.to_string());
+    fn get_by_id(&self, collection_id: &CollectionID, document_id: &DocumentID) -> Result<Document, Error> {
         self.get_doc(collection_id, &self.id_lookup, &document_id)
     }
 
-    fn get_by_seq_id(&self, collection_id: &str, document_seq_id: &u64) -> Result<Document, Error> {
-        let seq_id = DocumentSeqID(*document_seq_id);
+    fn get_by_seq_id(&self, collection_id: &CollectionID, seq_id: &DocumentSeqID) -> Result<Document, Error> {
         self.get_doc(collection_id, &self.seq_id_lookup, &seq_id)
+    }
+
+    fn insert(&self, collection_id: &CollectionID, document: Document) -> Result<(), Error> {
+        let Some(collection) = self.collections.get(&collection_id).map(|c| Arc::clone(c.value())) else {
+            return Error::code(COLLECTION_NOT_FOUND)
+                .message(format!("collection {} not found", collection_id.0))
+                .throw();
+        };
+
+        let buffer = collection.buffer.load();
+        buffer.id_to_seq_id.insert(document.id.clone(), document.seq_id.clone());
+        buffer.buffer.insert(document.seq_id.clone(), document);
+
+        Ok(())
+    }
+
+    fn flush(&self, collection_id: &CollectionID) -> Result<(), Error> {
+        
     }
 }
 
 impl ManagerImpl {
-    fn get_doc<LookupT: Lookup>(&self, collection_id: &str, lookup: &LookupT, key: &LookupT::Key) -> Result<Document, Error> {
-        let collection_id = CollectionID(collection_id.to_string());
-
+    fn get_doc<LookupT: Lookup>(&self, collection_id: &CollectionID, lookup: &LookupT, key: &LookupT::Key) -> Result<Document, Error> {
         let Some(collection) = self.collections.get(&collection_id).map(|c| Arc::clone(c.value())) else {
             return Error::code(COLLECTION_NOT_FOUND)
                 .message(format!("collection {} not found", collection_id.0))
@@ -101,18 +115,18 @@ impl ManagerImpl {
                 .throw();
         }
 
-        let first_key = &docs[0].0;
+        let first_key = lookup.key(&docs[0]);
         if key < first_key {
             return Ok(vixalg::Ordering::Less);
         }
 
-        let last_key = &docs[docs.len() - 1].0;
+        let last_key = lookup.key(&docs[docs.len() - 1]);
         if key > last_key {
             return Ok(vixalg::Ordering::Greater);
         }
 
-        for (doc_key, doc) in docs {
-            if doc_key == *key {
+        for doc in docs {
+            if lookup.key(&doc) == key {
                 return Ok(vixalg::Ordering::Equal(doc));
             }
         }

@@ -1,14 +1,18 @@
-use arc_swap::ArcSwap;
+use std::{sync::{Arc, Mutex, atomic::{AtomicBool, AtomicI32, Ordering}}};
+
+use arc_swap::{ArcSwap, ArcSwapOption};
 use dashmap::DashMap;
 use fastbloom::BloomFilter;
 
-use crate::{document::entity::{CollectionID, DocumentID, DocumentSeqID, SegmentID}, shared::Document};
+use crate::{document::{entity::{CollectionID, Document, DocumentID, DocumentSeqID, SegmentID}, errors::FLUSH_ON_PROGRESS}, errcode::FATAL_ERROR, utils::vixerr::Error};
 
 pub struct CollectionState {
     pub id: CollectionID,
     pub levels: ArcSwap<Vec<LevelState>>,
+
+    pub commit_lock: Mutex<()>,
     pub buffer: ArcSwap<TransactionBuffer>,
-    pub commit_buffer: ArcSwap<Option<TransactionBuffer>>,
+    pub commit_buffer: ArcSwapOption<TransactionBuffer>,
 }
 
 impl CollectionState {
@@ -52,11 +56,43 @@ impl CollectionState {
             .flat_map(|level| level.segment_ids.iter().cloned())
             .collect()
     }
+
+    pub fn flush_buffer(&self) -> Result<(), Error> {
+        let _guard = match self.commit_lock.try_lock() {
+            Ok(val) => val,
+            Err(_) => return Error::code(FLUSH_ON_PROGRESS)
+                .message("flush is on progress")
+                .throw(),
+        };
+
+        let clean_buffer = TransactionBuffer::new();
+        let old_buffer = self.buffer.swap(Arc::new(clean_buffer)); 
+        let old_commit_buffer = self.commit_buffer.swap(Some(old_buffer));
+        if old_commit_buffer.is_some() {
+            return Error::code(FATAL_ERROR)
+                .message("commit buffer is not empty on commit")
+                .throw()
+        }
+
+        // do something with adapter
+
+        self.commit_buffer.swap(None);
+        Ok(())
+    }
 }
 
 pub struct TransactionBuffer {
     pub id_to_seq_id: DashMap<DocumentID, DocumentSeqID>,
     pub buffer: DashMap<DocumentSeqID, Document>, // TODO: tombstone
+}
+
+impl TransactionBuffer {
+    pub fn new() -> Self {
+        TransactionBuffer {
+            id_to_seq_id: DashMap::new(),
+            buffer: DashMap::new(),
+        }
+    }
 }
 
 pub struct LevelState {
