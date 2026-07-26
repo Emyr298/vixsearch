@@ -1,6 +1,7 @@
-use std::{sync::{Arc, mpsc::{self, Receiver, Sender}}, thread};
+use std::{sync::{Arc, atomic::{AtomicI64, AtomicU64, Ordering}, mpsc::{self, Receiver, Sender}}, thread};
 
 use dashmap::DashMap;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::{document::engine::{engine::{Engine, Port}, errors::{COLLECTION_NOT_FOUND, DOCUMENT_NOT_FOUND}, lsm_entity::Operation, lsm_state::{CollectionState, SegmentState}, param_result::InsertParam}, errcode::{self, FATAL_ERROR}, utils::{vixalg, vixerr::Error}};
 
@@ -10,6 +11,7 @@ pub struct LSMEngine {
     segments_by_id: DashMap<String, Arc<SegmentState>>,
     op_chan_sender: Sender<Vec<Operation>>,
     op_batch_number: i32,
+    committed_op_seq: AtomicU64,
 }
 
 pub fn new_lsm_engine(adapter: Arc<dyn Port>, op_batch_number: i32) -> (Arc<dyn Engine>, impl FnOnce() + Send + 'static) {
@@ -35,7 +37,10 @@ fn listen_lsm_operations(engine: Arc<LSMEngine>, op_chan_receiver: Receiver<Vec<
                     batch.push(op);
                 }
 
-                engine.execute_operations(batch.into_iter().flatten().collect())?;
+                if let Err(_) = engine.execute_operations(batch.into_iter().flatten().collect()) {
+                    // TODO: add logging + graceful panic
+                    break;
+                }
             }
         });
     }
@@ -49,6 +54,7 @@ impl LSMEngine {
             segments_by_id: DashMap::new(),
             op_chan_sender,
             op_batch_number,
+            committed_op_seq: AtomicU64::new(0), // TODO: add method that accepts load from disk
         }
     }
 }
@@ -140,6 +146,30 @@ impl Engine for LSMEngine {
 
 impl LSMEngine {
     fn execute_operations(&self, operations: Vec<Operation>) -> Result<(), Error> {
+        // op_seq is always ascending and contiguous
+        let max_op_seq = operations[operations.len() - 1].op_seq;
+
+        operations.into_par_iter()
+            .map(|op| self.execute_insert(op))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        self.committed_op_seq.store(max_op_seq, Ordering::Relaxed);
+
+        // TODO: signals commit op seq increase -> client response is an observer that waits operations/inserts to be commited
+
+        Ok(())
+    }
+
+    fn execute_insert(&self, operation: Operation) -> Result<(), Error> {
+        let Some(collection) = self.collections_by_id.get(&operation.collection_id).map(|c| Arc::clone(c.value())) else {
+            return Error::code(COLLECTION_NOT_FOUND)
+                .message(format!("collection {} not found", &operation.collection_id))
+                .throw();
+        };
+
+        let buffer = collection.buffer.load();
+        buffer.insert((operation.key, operation.op_seq), operation.value);
+        
         Ok(())
     }
 

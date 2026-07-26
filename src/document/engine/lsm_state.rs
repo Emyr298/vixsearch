@@ -1,7 +1,7 @@
 use std::{sync::{Arc, Mutex}};
 
 use arc_swap::{ArcSwap, ArcSwapOption};
-use crossbeam_skiplist::SkipList;
+use crossbeam_skiplist::SkipMap;
 use dashmap::DashMap;
 use fastbloom::BloomFilter;
 
@@ -12,8 +12,8 @@ pub struct CollectionState {
     pub levels: ArcSwap<Vec<LevelState>>,
 
     pub commit_lock: Mutex<()>,
-    pub buffer: ArcSwap<SkipList<(String, i64), Vec<u8>>>,
-    pub commit_buffer: ArcSwapOption<SkipList<(String, i64), Vec<u8>>>,
+    pub buffer: ArcSwap<SkipMap<(String, u64), Vec<u8>>>,
+    pub commit_buffer: ArcSwapOption<SkipMap<(String, u64), Vec<u8>>>,
 }
 
 impl CollectionState {
