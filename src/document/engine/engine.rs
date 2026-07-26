@@ -1,8 +1,9 @@
-use crate::utils::vixerr::Error;
+use crate::{document::engine::param_result::InsertParam, utils::vixerr::Error};
 
 pub trait Engine: Send + Sync {
     fn get_by_key(&self, collection_id: &str, key: &str) -> Result<Vec<u8>, Error>;
-    fn insert(&self, collection_id: &str, key: &str, value: Vec<u8>) -> Result<(), Error>;
+    fn insert(&self, collection_id: &str, param: InsertParam) -> Result<(), Error>;
+    fn batch_insert(&self, collection_id: &str, param: Vec<InsertParam>) -> Result<(), Error>;
     fn flush(&self, collection_id: &str) -> Result<(), Error>;
 }
 

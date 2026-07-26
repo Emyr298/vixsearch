@@ -1,25 +1,54 @@
-use std::sync::Arc;
+use std::{sync::{Arc, mpsc::{self, Receiver, Sender}}, thread};
 
 use dashmap::DashMap;
 
-use crate::{document::engine::{errors::{COLLECTION_NOT_FOUND, DOCUMENT_NOT_FOUND}, engine::{Engine, Port}, lsm_state::{CollectionState, SegmentState}}, errcode, utils::{vixalg, vixerr::Error}};
+use crate::{document::engine::{engine::{Engine, Port}, errors::{COLLECTION_NOT_FOUND, DOCUMENT_NOT_FOUND}, lsm_entity::Operation, lsm_state::{CollectionState, SegmentState}, param_result::InsertParam}, errcode::{self, FATAL_ERROR}, utils::{vixalg, vixerr::Error}};
 
 pub struct LSMEngine {
-    adapter: Box<dyn Port>,
+    adapter: Arc<dyn Port>,
     collections_by_id: DashMap<String, Arc<CollectionState>>,
     segments_by_id: DashMap<String, Arc<SegmentState>>,
+    op_chan_sender: Sender<Vec<Operation>>,
+    op_batch_number: i32,
 }
 
-pub fn new_manager(adapter: Box<dyn Port>) -> Box<dyn Engine> {
-    Box::new(LSMEngine::new(adapter))
+pub fn new_lsm_engine(adapter: Arc<dyn Port>, op_batch_number: i32) -> (Arc<dyn Engine>, impl FnOnce() + Send + 'static) {
+    let (op_chan_sender, op_chan_receiver) = mpsc::channel::<Vec<Operation>>();
+
+    let engine: Arc<LSMEngine> = Arc::new(LSMEngine::new(adapter, op_chan_sender, op_batch_number));
+    let listen_operations_fn = listen_lsm_operations(Arc::clone(&engine), op_chan_receiver);
+
+    return (engine, listen_operations_fn);
+}
+
+fn listen_lsm_operations(engine: Arc<LSMEngine>, op_chan_receiver: Receiver<Vec<Operation>>) -> impl FnOnce() + Send + 'static {
+    || {
+        thread::spawn(move || {
+            loop {
+                let first_op = match op_chan_receiver.recv() {
+                    Ok(op) => op,
+                    Err(_) => break,
+                };
+
+                let mut batch = vec![first_op];
+                while let Ok(op) = op_chan_receiver.try_recv() {
+                    batch.push(op);
+                }
+
+                engine.execute_operations(batch.into_iter().flatten().collect())?;
+            }
+        });
+    }
 }
 
 impl LSMEngine {
-    pub fn new(adapter: Box<dyn Port>) -> Self {
+    pub fn new(adapter: Arc<dyn Port>, op_chan_sender: Sender<Vec<Operation>>, op_batch_number: i32) -> Self {
         LSMEngine {
             adapter,
             collections_by_id: DashMap::new(),
             segments_by_id: DashMap::new(),
+            op_chan_sender,
+            op_batch_number,
         }
     }
 }
@@ -63,15 +92,43 @@ impl Engine for LSMEngine {
             .throw()
     }
 
-    fn insert(&self, collection_id: &str, key: &str, value: Vec<u8>) -> Result<(), crate::utils::vixerr::Error> {
-        let Some(collection) = self.collections_by_id.get(collection_id).map(|c| Arc::clone(c.value())) else {
-            return Error::code(COLLECTION_NOT_FOUND)
-                .message(format!("collection {} not found", collection_id))
+    fn insert(&self, collection_id: &str, param: InsertParam) -> Result<(), Error> {
+        if let Err(err) = self.op_chan_sender.send(vec![Operation {
+            collection_id: collection_id.to_string(),
+            key: param.key,
+            op_seq: param.op_seq,
+            value: param.value,
+        }]) {
+            return Error::code(FATAL_ERROR)
+                .message("failed to send operation into channel")
+                .wrap(err)
                 .throw();
-        };
+        }
 
-        let buffer = collection.buffer.load();
-        buffer.insert(key.to_string(), value.clone());
+        // TODO: wait until commit number
+
+        Ok(())
+    }
+
+    fn batch_insert(&self, collection_id: &str, params: Vec<InsertParam>) -> Result<(), Error> {
+        let operations: Vec<Operation> = params
+            .into_iter()
+            .map(|param| Operation {
+                collection_id: collection_id.to_string(),
+                key: param.key,
+                op_seq: param.op_seq,
+                value: param.value,
+            })
+            .collect();
+
+        if let Err(err) = self.op_chan_sender.send(operations) {
+            return Error::code(FATAL_ERROR)
+                .message("failed to send operation into channel")
+                .wrap(err)
+                .throw();
+        }
+
+        // TODO: wait until commit number
 
         Ok(())
     }
@@ -82,6 +139,10 @@ impl Engine for LSMEngine {
 }
 
 impl LSMEngine {
+    fn execute_operations(&self, operations: Vec<Operation>) -> Result<(), Error> {
+        Ok(())
+    }
+
     fn get_value_from_segment(&self, segment: &SegmentState, key: &str) -> Result<Vec<u8>, Error> {
         let Some(value) = vixalg::binary_search(&segment.key_block_offsets, |block_offset| {
             self.get_value_from_segment_compare_fn(segment, block_offset, key)
