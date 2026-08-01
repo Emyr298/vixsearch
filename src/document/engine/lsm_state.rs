@@ -1,7 +1,6 @@
 use std::{sync::{Arc, Mutex}};
 
 use arc_swap::{ArcSwap, ArcSwapOption};
-use crossbeam_skiplist::SkipMap;
 use dashmap::DashMap;
 use fastbloom::BloomFilter;
 
@@ -12,12 +11,12 @@ pub struct CollectionState {
     pub levels: ArcSwap<Vec<LevelState>>,
 
     pub commit_lock: Mutex<()>,
-    pub buffer: ArcSwap<SkipMap<(String, u64), Vec<u8>>>,
-    pub commit_buffer: ArcSwapOption<SkipMap<(String, u64), Vec<u8>>>,
+    pub buffer: ArcSwap<DashMap<Vec<u8>, Vec<u8>>>,
+    pub commit_buffer: ArcSwapOption<DashMap<Vec<u8>, Vec<u8>>>,
 }
 
 impl CollectionState {
-    pub fn value_from_buffer(&self, key: &str) -> Option<Vec<u8>> {
+    pub fn value_from_buffer(&self, key: &[u8]) -> Option<Vec<u8>> {
         let buffer = self.buffer.load();
 
         if let Some(value) = buffer.get(key) {
@@ -75,18 +74,18 @@ pub struct SegmentState {
     pub id: String,
     pub collection_id: String,
 
-    pub smallest_key: String,
-    pub biggest_key: String,
+    pub smallest_key: Vec<u8>,
+    pub biggest_key: Vec<u8>,
     pub key_filter: BloomFilter,
     pub key_block_offsets: Vec<u64>,
 }
 
 impl SegmentState {
-    pub fn may_contain_key(&self, key: &str) -> bool {
-        if key < self.smallest_key.as_str() || key > self.biggest_key.as_str() {
+    pub fn may_contain_key(&self, key: &[u8]) -> bool {
+        if key < self.smallest_key.as_slice() || key > self.biggest_key.as_slice() {
             return false;
         }
 
         self.key_filter.contains(&key)
-    } 
+    }
 }
