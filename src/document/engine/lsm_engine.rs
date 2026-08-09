@@ -1,25 +1,31 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, atomic::Ordering};
 
 use dashmap::DashMap;
 
-use crate::{document::engine::{engine::{Engine, Port}, errors::{COLLECTION_NOT_FOUND, DOCUMENT_NOT_FOUND}, lsm_state::{CollectionState, SegmentState}}, errcode, utils::{vixalg, vixerr::Error}};
+use crate::{document::engine::{engine::{Engine, LSMPort}, errors::{COLLECTION_NOT_FOUND, DOCUMENT_NOT_FOUND}, lsm_state::{CollectionState, SegmentState}}, errcode, utils::{vixalg, vixerr::Error, vixpool::{POOL_QUEUE_FULL, Pool}}};
 
 pub struct LSMEngine {
-    adapter: Arc<dyn Port>,
+    adapter: Arc<dyn LSMPort>,
     collections_by_id: DashMap<String, Arc<CollectionState>>,
     segments_by_id: DashMap<String, Arc<SegmentState>>,
+    flush_pool: Arc<dyn Pool>,
+    flush_threshold: usize,
+    flush_lock: Arc<Mutex<()>>,
 }
 
-pub fn new_lsm_engine(adapter: Arc<dyn Port>) -> Arc<dyn Engine> {
-    return Arc::new(LSMEngine::new(adapter))
+pub fn new_lsm_engine(adapter: Arc<dyn LSMPort>, flush_pool: Arc<dyn Pool>, flush_threshold: usize) -> Arc<dyn Engine> {
+    return Arc::new(LSMEngine::new(adapter, flush_pool, flush_threshold));
 }
 
 impl LSMEngine {
-    pub fn new(adapter: Arc<dyn Port>) -> Self {
+    pub fn new(adapter: Arc<dyn LSMPort>, flush_pool: Arc<dyn Pool>, flush_threshold: usize) -> Self {
         LSMEngine {
             adapter,
             collections_by_id: DashMap::new(),
             segments_by_id: DashMap::new(),
+            flush_pool,
+            flush_threshold,
+            flush_lock: Arc::new(Mutex::new(())),
         }
     }
 }
@@ -73,14 +79,29 @@ impl Engine for LSMEngine {
                 .throw();
         };
 
-        let buffer = collection.buffer.load();
+        let buffer = loop {
+            let candidate = collection.buffer.load();
+            candidate.add_in_flight();
+
+            // ensures after committed, we can't add in_flight anymore
+            if Arc::ptr_eq(&candidate, &collection.buffer.load()) {
+                break candidate;
+            }
+
+            candidate.sub_in_flight();
+        };
+
         buffer.insert(key.to_vec(), value.to_vec());
+        buffer.sub_in_flight();
+
+        if let Err(err) = self.should_flush(collection) {
+            // let the next inserts trigger the flush
+            if err.code != POOL_QUEUE_FULL {
+                return err.throw();
+            }
+        }
         
         Ok(())
-    }
-
-    fn flush(&self, _: &str) -> Result<(), crate::utils::vixerr::Error> {
-        todo!()
     }
 }
 
@@ -126,5 +147,41 @@ impl LSMEngine {
         }
 
         Ok(vixalg::Ordering::NotFound)
+    }
+
+    fn should_flush(&self, collection: Arc<CollectionState>) -> Result<(), Error> {
+        let buffer = collection.buffer.load();
+        let byte_size = buffer.byte_size.load(Ordering::Relaxed);
+        
+        if byte_size < self.flush_threshold {
+            return Ok(());
+        }
+
+        let adapter = Arc::clone(&self.adapter);
+        let flush_lock = Arc::clone(&self.flush_lock);
+        self.flush_pool.submit(Box::new(move || {
+            let _guard = match flush_lock.try_lock() {
+                Ok(val) => val,
+                Err(_) => return,
+            };
+
+            if let Err(err) = collection.start_flush() {
+                eprintln!("failed to flush collection {}: {}", collection.id, err);
+                // TODO: handle FATAL_ERROR after handling is defined
+                return;
+            }
+
+            let commit_buffer_opt = collection.commit_buffer.load();
+            if let Some(commit_buffer) = commit_buffer_opt.as_ref() {
+                if let Err(err) = adapter.flush_segment(Arc::clone(commit_buffer)) {
+                    eprintln!("failed to flush collection {}: {}", collection.id, err);
+                    // TODO: handle FATAL_ERROR after handling is defined
+                }
+            }
+
+            collection.end_flush();
+        }))?;
+
+        Ok(())
     }
 }

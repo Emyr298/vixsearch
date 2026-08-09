@@ -1,31 +1,72 @@
-use std::{sync::{Arc, Mutex}};
+use std::{hint::spin_loop, sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}}};
 
 use arc_swap::{ArcSwap, ArcSwapOption};
 use dashmap::DashMap;
 use fastbloom::BloomFilter;
 
-use crate::{document::engine::lsm_errors::FLUSH_ON_PROGRESS, errcode, utils::vixerr::Error};
+use crate::{errcode, utils::vixerr::Error};
+
+pub struct CollectionBuffer {
+    pub byte_size: AtomicUsize,
+    pub in_flight: AtomicUsize,
+    pub map: DashMap<Vec<u8>, Vec<u8>>,
+}
+
+impl CollectionBuffer {
+    pub fn new() -> Self {
+        CollectionBuffer {
+            byte_size: AtomicUsize::new(0),
+            in_flight: AtomicUsize::new(0),
+            map: DashMap::new(),
+        }
+    }
+
+    pub fn insert(&self, key: Vec<u8>, value: Vec<u8>) {
+        let key_size = key.len();
+        let cur_value_size = value.len();
+
+        let cur_approx_size = key_size + cur_value_size;
+        let old_approx_size = match self.map.insert(key, value) {
+            Some(old_value) => key_size + old_value.len(),
+            None => 0,
+        };
+
+        if cur_approx_size > old_approx_size {
+            self.byte_size.fetch_add(cur_approx_size - old_approx_size, Ordering::Relaxed);
+        } else {
+            self.byte_size.fetch_sub(old_approx_size - cur_approx_size, Ordering::Relaxed);
+        }
+    }
+
+    pub fn add_in_flight(&self) {
+        self.in_flight.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn sub_in_flight(&self) {
+        self.in_flight.fetch_sub(1, Ordering::Release);
+    }
+}
 
 pub struct CollectionState {
     pub id: String,
     pub levels: ArcSwap<Vec<LevelState>>,
 
     pub commit_lock: Mutex<()>,
-    pub buffer: ArcSwap<DashMap<Vec<u8>, Vec<u8>>>,
-    pub commit_buffer: ArcSwapOption<DashMap<Vec<u8>, Vec<u8>>>,
+    pub buffer: ArcSwap<CollectionBuffer>,
+    pub commit_buffer: ArcSwapOption<CollectionBuffer>,
 }
 
 impl CollectionState {
     pub fn value_from_buffer(&self, key: &[u8]) -> Option<Vec<u8>> {
         let buffer = self.buffer.load();
 
-        if let Some(value) = buffer.get(key) {
+        if let Some(value) = buffer.map.get(key) {
             return Some(value.clone());
         }
 
         let commit_buffer = self.commit_buffer.load();
         if let Some(cb) = commit_buffer.as_ref() {
-            if let Some(value) = cb.get(key) {
+            if let Some(value) = cb.map.get(key) {
                 return Some(value.clone());
             }
         }
@@ -41,28 +82,25 @@ impl CollectionState {
             .collect()
     }
 
-    pub fn flush_buffer(&self) -> Result<(), Error> {
-        let _guard = match self.commit_lock.try_lock() {
-            Ok(val) => val,
-            Err(_) => return Error::code(FLUSH_ON_PROGRESS)
-                .message("flush is on progress")
-                .throw(),
-        };
-
-        let clean_buffer = DashMap::new();
+    pub fn start_flush(&self) -> Result<(), Error> {
+        let clean_buffer = CollectionBuffer::new();
         let old_buffer = self.buffer.swap(Arc::new(clean_buffer)); 
-        let old_commit_buffer = self.commit_buffer.swap(Some(old_buffer));
+        let old_commit_buffer = self.commit_buffer.swap(Some(Arc::clone(&old_buffer)));
         if old_commit_buffer.is_some() {
             return Error::code(errcode::FATAL_ERROR)
                 .message("commit buffer is not empty on commit")
                 .throw()
         }
 
-        // do something with adapter
-        
+        while old_buffer.in_flight.load(Ordering::Acquire) > 0 {
+            spin_loop();
+        }
 
-        self.commit_buffer.swap(None);
         Ok(())
+    }
+
+    pub fn end_flush(&self) {
+        self.commit_buffer.swap(None);
     }
 }
 

@@ -68,10 +68,6 @@ impl Manager for ManagerImpl {
 
         Ok(())
     }
-
-    fn flush(&self, collection_id: &str) -> Result<(), Error> {
-        self.engine.flush(collection_id)
-    }
 }
 
 impl ManagerImpl {
