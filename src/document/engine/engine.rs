@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{document::engine::lsm_state::CollectionBuffer, utils::vixerr::Error};
+use crate::{document::engine::{lsm_port_param_result::GetMetadataPortResult, lsm_state::CollectionBuffer}, utils::vixerr::Error};
 
 pub trait Engine: Send + Sync {
     fn get_by_key(&self, collection_id: &str, key: &[u8]) -> Result<Vec<u8>, Error>;
@@ -8,6 +8,7 @@ pub trait Engine: Send + Sync {
 }
 
 pub trait LSMPort: Send + Sync {
+    fn get_metadata(&self, segment_id: &str) -> Result<GetMetadataPortResult, Error>;
     fn get_values_from_block(&self, segment_id: &str, block_offset: u64) -> Result<Vec<(Vec<u8>, Vec<u8>)>, Error>;
     fn flush_segment(&self, collection_buffer: Arc<CollectionBuffer>) -> Result<(), Error>;
 }

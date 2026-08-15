@@ -2,7 +2,7 @@ use std::{fs::{File, OpenOptions}, os::unix::fs::FileExt, path::Path, sync::Arc}
 
 use dashmap::DashMap;
 
-use crate::{errcode::FATAL_ERROR, storage::{errors::NAME_NOT_FOUND, storage::BlockStorage}, utils::vixerr::Error};
+use crate::{errcode::FATAL_ERROR, storage::{BlockWriter, errors::NAME_NOT_FOUND, file_writer::new_file_writer, storage::BlockStorage}, utils::vixerr::Error};
 
 pub struct FileStorage {
     file_by_name: DashMap<String, Arc<File>>,
@@ -14,6 +14,22 @@ pub fn new_file_storage(base_dir: String) -> Arc<dyn BlockStorage> {
 }
 
 impl BlockStorage for FileStorage {
+    fn size(&self, name: &str) -> Result<u64, Error> {
+        let Some(file) = self.file_by_name.get(name) else {
+            return Error::code(FATAL_ERROR).message(NAME_NOT_FOUND).throw();
+        };
+
+        let file_metadata = match file.metadata() {
+            Ok(val) => val,
+            Err(err) => return Error::code(FATAL_ERROR)
+                .message("failed to open file")
+                .wrap(err)
+                .throw(),
+        };
+        
+        Ok(file_metadata.len())
+    }
+
     fn read(&self, name: &str, offset: u64, size: u64) -> Result<Vec<u8>, Error> {
         let Some(file) = self.file_by_name.get(name) else {
             return Error::code(FATAL_ERROR).message(NAME_NOT_FOUND).throw();
@@ -29,35 +45,16 @@ impl BlockStorage for FileStorage {
 
         Ok(buf)
     }
-    
-    fn write(&self, name: &str, offset: u64, data: &[u8]) -> Result<(), Error> {
-        let Some(file) = self.file_by_name.get(name) else {
-            return Error::code(FATAL_ERROR).message(NAME_NOT_FOUND).throw();
-        };
 
-        if let Err(e) = file.write_at(data, offset) {
+    fn writer(&self, name: &str) -> Result<Box<dyn BlockWriter>, Error> {
+        let Some(file) = self.file_by_name.get(name) else {
             return Error::code(FATAL_ERROR)
-                .message(format!("failed to write to file {}", name))
-                .wrap(e)
+                .message(NAME_NOT_FOUND)
                 .throw();
         };
 
-        Ok(())
-    }
-    
-    fn commit(&self, name: &str) -> Result<(), Error> {
-        let Some(file) = self.file_by_name.get(name) else {
-            return Error::code(FATAL_ERROR).message(NAME_NOT_FOUND).throw();
-        };
-
-        if let Err(e) = file.sync_all() {
-            return Error::code(FATAL_ERROR)
-                .message(format!("failed to commit file {}", name))
-                .wrap(e)
-                .throw();
-        };
-
-        Ok(())
+        let file_arc = Arc::clone(&file);
+        Ok(new_file_writer(name, file_arc))
     }
 }
 
