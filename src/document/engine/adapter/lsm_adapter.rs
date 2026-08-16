@@ -3,16 +3,9 @@ use std::sync::Arc;
 use fastbloom::BloomFilter;
 use uuid::Uuid;
 
-use crate::{document::engine::{LSMPort, lsm_port_param_result::GetMetadataPortResult, lsm_state::CollectionBuffer}, errcode::FATAL_ERROR, storage::{BlockStorage, BlockWriter}, utils::vixerr::Error};
+use crate::{document::engine::{LSMPort, adapter::lsm_constants::{BLOCK_HEADER_SIZE, BLOCK_MAGIC, FOOTER_MAGIC, FOOTER_SIZE, METADATA_HEADER_SIZE, METADATA_MAGIC}, lsm_port_param_result::GetMetadataPortResult, lsm_state::CollectionBuffer}, errcode::FATAL_ERROR, storage::{BlockStorage, BlockWriter}, utils::vixerr::Error};
 
-pub const BLOCK_HEADER_SIZE: usize = 20;
-pub const METADATA_HEADER_SIZE: usize = 16;
-pub const FOOTER_SIZE: usize = 16;
-pub const BLOCK_MAGIC: &[u8] = b"BLCK";
-pub const FOOTER_MAGIC: &[u8] = b"FOOT";
-pub const METADATA_MAGIC: &[u8] = b"META";
-
-
+// TODO: can try zero copy for cleaner way
 pub struct LSMAdapter {
     storage: Arc<dyn BlockStorage>,
     min_document_content_size: usize,
@@ -97,6 +90,8 @@ impl LSMPort for LSMAdapter {
     }
 
     fn get_values_from_block(&self, segment_id: &str, block_offset: u64) -> Result<Vec<(Vec<u8>, Vec<u8>)>, Error> {
+        // TODO: block max size should be guarded -> since we will load to memory
+
         let name = self.get_name(&segment_id);
 
         let block_header = self.storage.read(&name, block_offset, BLOCK_HEADER_SIZE as u64)?;
@@ -108,42 +103,48 @@ impl LSMPort for LSMAdapter {
                 .throw();
         }
 
-        let expected_block_len_hash = u32::from_le_bytes(block_header[4..8].try_into().unwrap());
-        let block_len_buf: [u8; 8] = block_header[8..16].try_into().unwrap();
-        if expected_block_len_hash != crc32fast::hash(&block_len_buf) {
+        let expected_content_len_hash = u32::from_le_bytes(block_header[4..8].try_into().unwrap());
+        let content_len_buf: [u8; 8] = block_header[8..16].try_into().unwrap();
+        if expected_content_len_hash != crc32fast::hash(&content_len_buf) {
             return Error::code(FATAL_ERROR)
-                .message(format!("invalid block format: block length hash mismatch"))
+                .message(format!("invalid block format: content length hash mismatch"))
                 .throw();
         }
 
-        let block_len = u64::from_le_bytes(block_len_buf);
+        let content_len = u64::from_le_bytes(content_len_buf);
 
-        let expected_block_hash = u32::from_le_bytes(block_header[16..BLOCK_HEADER_SIZE].try_into().unwrap());
-        let block = self.storage.read(&name, block_offset + (BLOCK_HEADER_SIZE as u64), block_len)?;
-        if expected_block_hash != crc32fast::hash(&block) {
+        let expected_content_hash = u32::from_le_bytes(block_header[16..BLOCK_HEADER_SIZE].try_into().unwrap());
+        let content_offset = block_offset + (BLOCK_HEADER_SIZE as u64);
+        let content_buf = self.storage.read(&name, content_offset, content_len)?;
+        if expected_content_hash != crc32fast::hash(&content_buf) {
             return Error::code(FATAL_ERROR)
-                .message(format!("invalid block format: block hash mismatch"))
+                .message(format!("invalid block format: content hash mismatch"))
                 .throw();
         }
-
         
+        let mut kv_pairs: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        let mut kv_offset = 0;
 
+        while kv_offset < content_len {
+            let key_len_offset: usize = kv_offset.try_into().unwrap();
+            let key_len_buf: [u8; 8] = content_buf[key_len_offset..key_len_offset + 8].try_into().unwrap();
+            let key_len: usize = u64::from_le_bytes(key_len_buf).try_into().unwrap();
 
+            let value_len_offset = key_len_offset + 8;
+            let value_len_buf: [u8; 8] = content_buf[value_len_offset..value_len_offset + 8].try_into().unwrap();
+            let value_len: usize = u64::from_le_bytes(value_len_buf).try_into().unwrap();
 
+            let key_offset = value_len_offset + 8;
+            let key: Vec<u8> = content_buf[key_offset..key_offset + key_len].to_vec();
 
+            let value_offset = key_offset + key_len;
+            let value: Vec<u8> = content_buf[value_offset..value_offset + value_len].to_vec();
 
+            kv_pairs.push((key, value));
+            kv_offset = kv_offset + 8 + 8 + key_len as u64 + value_len as u64;
+        }
 
-
-
-
-
-
-
-
-
-
-
-        todo!()
+        Ok(kv_pairs)
     }
 
     fn flush_segment(&self, collection_buffer: Arc<CollectionBuffer>) -> Result<(), Error> {
