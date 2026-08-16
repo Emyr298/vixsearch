@@ -49,7 +49,7 @@ impl CollectionBuffer {
 
 pub struct CollectionState {
     pub id: String,
-    pub levels: ArcSwap<Vec<LevelState>>,
+    pub segments: ArcSwap<Vec<CollectionSegmentState>>,
 
     pub commit_lock: Mutex<()>,
     pub buffer: ArcSwap<CollectionBuffer>,
@@ -76,7 +76,7 @@ impl CollectionState {
 
     /// Returns a vector of all segment IDs in the collection, across all levels sorted from L0 to Ln.
     pub fn get_segment_ids(&self) -> Vec<String> {
-        let levels = self.levels.load();
+        let levels = self.segment_levels.load();
         levels.iter()
             .flat_map(|level| level.segment_ids.iter().cloned())
             .collect()
@@ -104,8 +104,10 @@ impl CollectionState {
     }
 }
 
-pub struct LevelState {
-    pub segment_ids: Vec<String>,
+pub struct CollectionSegmentState {
+    pub id: String,
+    pub level: u32,
+    // TODO: inflight
 }
 
 pub struct SegmentState {

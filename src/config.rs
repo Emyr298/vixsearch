@@ -6,8 +6,14 @@ use crate::defaults::ConfigDefaults;
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub address: String,
-    pub data_dir: String,
+    pub base_dir: String,
     pub collection_metadata_filename: String,
+
+    pub document_block_min_content_size: usize,
+    pub document_bloomfilter_false_positive_probability: f64,
+    pub document_flush_thread_size: usize,
+    pub document_flush_queue_size: usize,
+    pub document_flush_byte_size_threshold: usize,
 }
 
 impl Config {

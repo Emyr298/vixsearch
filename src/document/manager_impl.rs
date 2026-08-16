@@ -1,18 +1,16 @@
+use std::sync::Arc;
+
 use crate::{document::{engine::{self, DOCUMENT_NOT_FOUND}, entity::{Document, key_from_id, key_from_seq_id}, manager::Manager, param_result::InsertParam}, errcode::FATAL_ERROR, utils::vixerr::Error};
 
 pub struct ManagerImpl {
-    engine: Box<dyn engine::Engine>,
-}
-
-pub fn new_manager(engine: Box<dyn engine::Engine>) -> Box<dyn Manager> {
-    Box::new(ManagerImpl::new(engine))
+    engine: Arc<dyn engine::Engine>,
 }
 
 impl ManagerImpl {
-    pub fn new(engine: Box<dyn engine::Engine>) -> Self {
-        ManagerImpl {
+    pub fn new(engine: Arc<dyn engine::Engine>) -> Arc<dyn Manager> {
+        Arc::new(ManagerImpl {
             engine,
-        }
+        })
     }
 }
 

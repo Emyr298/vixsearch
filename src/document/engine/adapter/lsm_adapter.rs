@@ -3,21 +3,53 @@ use std::sync::Arc;
 use fastbloom::BloomFilter;
 use uuid::Uuid;
 
-use crate::{document::engine::{LSMPort, adapter::lsm_constants::{BLOCK_HEADER_SIZE, BLOCK_MAGIC, FOOTER_MAGIC, FOOTER_SIZE, METADATA_HEADER_SIZE, METADATA_MAGIC}, lsm_port_param_result::GetMetadataPortResult, lsm_state::CollectionBuffer}, errcode::FATAL_ERROR, storage::{BlockStorage, BlockWriter}, utils::vixerr::Error};
+use crate::{document::engine::{LSMPort, adapter::lsm_helper::{BLOCK_HEADER_SIZE, BLOCK_MAGIC, Commit, FOOTER_MAGIC, FOOTER_SIZE, METADATA_HEADER_SIZE, METADATA_MAGIC, get_latest_commit, latest_commit_name, name, store}, lsm_port_param_result::{GetAllSegmentByCollectionIDPortResult, GetMetadataPortResult}, lsm_state::CollectionBuffer}, errcode::FATAL_ERROR, storage::{Storage, StorageAccessor}, utils::vixerr::Error};
 
 // TODO: can try zero copy for cleaner way
 pub struct LSMAdapter {
-    storage: Arc<dyn BlockStorage>,
+    storage: Arc<dyn Storage>,
     min_document_content_size: usize,
     false_positive_probability: f64,
 }
 
-impl LSMPort for LSMAdapter {
-    fn get_metadata(&self, segment_id: &str) -> Result<GetMetadataPortResult, Error> {
-        let name = self.get_name(segment_id);
-        let metadata_offset = self.get_metadata_offset(&name)?;
+impl LSMAdapter {
+    pub fn new(
+        storage: Arc<dyn Storage>,
+        min_document_content_size: usize,
+        false_positive_probability: f64,
+    ) -> Arc<dyn LSMPort> {
+        Arc::new(LSMAdapter {
+            storage: storage,
+            min_document_content_size: min_document_content_size,
+            false_positive_probability: false_positive_probability,
+        })
+    }
+}
 
-        let metadata_header = self.storage.read(&name, metadata_offset, METADATA_HEADER_SIZE as u64)?;
+impl LSMPort for LSMAdapter {
+    fn get_all_segment_by_collection_id(&self, collection_id: &str) -> Result<GetAllSegmentByCollectionIDPortResult, Error> {
+        let store = store(collection_id);
+        let names = self.storage.get_all_name(&store)?;
+
+        let latest_commit = match latest_commit_name(&names) {
+            Some(latest_commit_name) => {
+                let accessor = self.storage.open(&store, &latest_commit_name)?;
+                get_latest_commit(accessor)?
+            },
+            None => Commit::empty(),
+        };
+
+        Ok(latest_commit.get_all_segment_by_collection_id_port_result())
+    }
+
+    fn get_metadata(&self, collection_id: &str, segment_id: &str) -> Result<GetMetadataPortResult, Error> {
+        let store = store(collection_id);
+        let name = name(segment_id);
+        let accessor = self.storage.open(&store, &name)?;
+
+        let metadata_offset = self.get_metadata_offset(&accessor)?;
+
+        let metadata_header = accessor.read(metadata_offset, METADATA_HEADER_SIZE as u64)?;
 
         let magic = &metadata_header[0..4];
         if magic != METADATA_MAGIC {
@@ -31,7 +63,7 @@ impl LSMPort for LSMAdapter {
         let metadata_len = u64::from_le_bytes(metadata_len_buf);
 
         let metadata_content_offset = metadata_offset + (METADATA_HEADER_SIZE as u64);
-        let metadata_content = self.storage.read(&name, metadata_content_offset, metadata_len)?;
+        let metadata_content = accessor.read(metadata_content_offset, metadata_len)?;
 
         let mut hasher = crc32fast::Hasher::new();
         hasher.update(&metadata_len_buf);
@@ -70,7 +102,7 @@ impl LSMPort for LSMAdapter {
             .unwrap();
 
         let smallest_key_offset = smallest_key_len_offset + 8;
-        let smallest_key = str::from_utf8(&metadata_content[smallest_key_offset..(smallest_key_offset + smallest_key_len)]).unwrap().to_string();
+        let smallest_key = &metadata_content[smallest_key_offset..(smallest_key_offset + smallest_key_len)].to_vec();
 
         let biggest_key_len_offset = smallest_key_offset + smallest_key_len;
         let biggest_key_len: usize = u64::from_le_bytes(metadata_content[biggest_key_len_offset..biggest_key_len_offset+8].try_into().unwrap())
@@ -78,23 +110,25 @@ impl LSMPort for LSMAdapter {
             .unwrap();
 
         let biggest_key_offset = biggest_key_len_offset + 8;
-        let biggest_key = str::from_utf8(&metadata_content[biggest_key_offset..(biggest_key_offset + biggest_key_len)]).unwrap().to_string();
+        let biggest_key = &metadata_content[biggest_key_offset..(biggest_key_offset + biggest_key_len)].to_vec();
 
         Ok(GetMetadataPortResult{
-            offsets,
+            key_block_offsets: offsets,
             filter_hash_cnt,
             filter_bits,
-            smallest_key,
-            biggest_key,
+            smallest_key: smallest_key.clone(),
+            biggest_key: biggest_key.clone(),
         })
     }
 
-    fn get_values_from_block(&self, segment_id: &str, block_offset: u64) -> Result<Vec<(Vec<u8>, Vec<u8>)>, Error> {
+    fn get_values_from_block(&self, collection_id: &str, segment_id: &str, block_offset: u64) -> Result<Vec<(Vec<u8>, Vec<u8>)>, Error> {
         // TODO: block max size should be guarded -> since we will load to memory
 
-        let name = self.get_name(&segment_id);
+        let store = store(collection_id);
+        let name = name(segment_id);
+        let accessor = self.storage.open(&store, &name)?;
 
-        let block_header = self.storage.read(&name, block_offset, BLOCK_HEADER_SIZE as u64)?;
+        let block_header = accessor.read(block_offset, BLOCK_HEADER_SIZE as u64)?;
 
         let magic = &block_header[0..4];
         if magic != BLOCK_MAGIC {
@@ -115,7 +149,7 @@ impl LSMPort for LSMAdapter {
 
         let expected_content_hash = u32::from_le_bytes(block_header[16..BLOCK_HEADER_SIZE].try_into().unwrap());
         let content_offset = block_offset + (BLOCK_HEADER_SIZE as u64);
-        let content_buf = self.storage.read(&name, content_offset, content_len)?;
+        let content_buf = accessor.read(content_offset, content_len)?;
         if expected_content_hash != crc32fast::hash(&content_buf) {
             return Error::code(FATAL_ERROR)
                 .message(format!("invalid block format: content hash mismatch"))
@@ -147,9 +181,11 @@ impl LSMPort for LSMAdapter {
         Ok(kv_pairs)
     }
 
-    fn flush_segment(&self, collection_buffer: Arc<CollectionBuffer>) -> Result<(), Error> {
+    fn flush_segment(&self, collection_id: &str, collection_buffer: Arc<CollectionBuffer>) -> Result<(), Error> {
         let segment_id = Uuid::new_v4().to_string();
-        let name = self.get_name(&segment_id);
+
+        let store = store(collection_id);
+        let name = name(&segment_id);
 
         if collection_buffer.map.len() == 0 {
             return Ok(());
@@ -162,27 +198,27 @@ impl LSMPort for LSMAdapter {
 
         kv_pairs.sort_by(|a, b| a.0.cmp(&b.0));
 
-        let writer = self.storage.writer(&name)?;
+        let accessor = self.storage.open(&store, &name)?;
 
-        let (metadata_offset, block_offsets) = self.write_documents(&writer, &kv_pairs)?;
-        let footer_offset = self.write_metadata(&writer, metadata_offset, &kv_pairs, block_offsets)?;
-        self.write_footer(&writer, footer_offset, metadata_offset)?;
+        let (metadata_offset, block_offsets) = self.write_documents(&accessor, &kv_pairs)?;
+        let footer_offset = self.write_metadata(&accessor, metadata_offset, &kv_pairs, block_offsets)?;
+        self.write_footer(&accessor, footer_offset, metadata_offset)?;
 
-        writer.commit()?;
+        accessor.flush()?;
 
         Ok(())
     }
 }
 
 impl LSMAdapter {
-    fn write_documents(&self, writer: &Box<dyn BlockWriter>, kv_pairs: &Vec<(Vec<u8>, Vec<u8>)>) -> Result<(u64, Vec<u64>), Error> {
+    fn write_documents(&self, accessor: &Box<dyn StorageAccessor>, kv_pairs: &Vec<(Vec<u8>, Vec<u8>)>) -> Result<(u64, Vec<u64>), Error> {
         let mut block_offsets: Vec<u64> = Vec::new();
         let mut block_content: Vec<u8> = Vec::new();
         let mut next_offset: u64 = 0;
         for (key, value) in kv_pairs.iter() {
             if block_content.len() >= self.min_document_content_size {
                 block_offsets.push(next_offset);
-                next_offset = self.write_document_block(writer, next_offset, &block_content)?;
+                next_offset = self.write_document_block(&accessor, next_offset, &block_content)?;
                 block_content = Vec::new();
             }
 
@@ -195,14 +231,14 @@ impl LSMAdapter {
 
         if block_content.len() > 0 {
             block_offsets.push(next_offset);
-            next_offset = self.write_document_block(writer, next_offset, &block_content)?;
+            next_offset = self.write_document_block(&accessor, next_offset, &block_content)?;
         }
 
         Ok((next_offset, block_offsets))
     }
 
     // <BLCK 4 byte><CRC CONTENT LEN 4 byte><CONTENT LEN 8 byte><CRC CONTENT 4 byte><CONTENT>
-    fn write_document_block(&self, writer: &Box<dyn BlockWriter>, offset: u64, content_bytes: &[u8]) -> Result<u64, Error> {
+    fn write_document_block(&self, accessor: &Box<dyn StorageAccessor>, offset: u64, content_bytes: &[u8]) -> Result<u64, Error> {
         let content_len = (content_bytes.len() as u64).to_le_bytes();
 
         let content_checksum = crc32fast::hash(&content_bytes);
@@ -215,7 +251,7 @@ impl LSMAdapter {
         buf.extend_from_slice(&content_checksum.to_le_bytes());
         buf.extend_from_slice(&content_bytes);
 
-        writer.write(offset, &buf)?;
+        accessor.write(offset, &buf)?;
 
         let next_offset = offset + (buf.len() as u64);
         Ok(next_offset)
@@ -224,7 +260,7 @@ impl LSMAdapter {
     // <META 4 byte><CRC 4 byte><METADATA LEN 8 byte><OFFSETS LEN 8 byte><OFFSETS>
     // <BLOOMFILTER HASH CNT 4 byte><BLOOMFILTER BITS LEN 8 byte><BF BITS>
     // <SMALLEST KEY LEN><SMALLEST KEY><BIGGEST KEY LEN><BIGGEST KEY>
-    fn write_metadata(&self, writer: &Box<dyn BlockWriter>, offset: u64, kv_pairs: &Vec<(Vec<u8>, Vec<u8>)>, block_offsets: Vec<u64>) -> Result<u64, Error> {
+    fn write_metadata(&self, writer: &Box<dyn StorageAccessor>, offset: u64, kv_pairs: &Vec<(Vec<u8>, Vec<u8>)>, block_offsets: Vec<u64>) -> Result<u64, Error> {
         let offsets_bytes = rmp_serde::to_vec(&block_offsets).unwrap();
         let offsets_len = (offsets_bytes.len() as u64).to_le_bytes();
 
@@ -292,7 +328,7 @@ impl LSMAdapter {
     }
 
     // <FOOT 4 byte><CRC 4 byte><METADATA OFFSET 8 byte>
-    fn write_footer(&self, writer: &Box<dyn BlockWriter>, offset: u64, metadata_offset: u64) -> Result<(), Error> {
+    fn write_footer(&self, accessor: &Box<dyn StorageAccessor>, offset: u64, metadata_offset: u64) -> Result<(), Error> {
         let metadata_offset_bytes = metadata_offset.to_le_bytes();
         let checksum = crc32fast::hash(&metadata_offset_bytes);
         
@@ -301,19 +337,15 @@ impl LSMAdapter {
         buf.extend_from_slice(&checksum.to_le_bytes());
         buf.extend_from_slice(&metadata_offset_bytes);
 
-        writer.write(offset, &buf)?;
+        accessor.write(offset, &buf)?;
 
         Ok(())
     }
 }
 
 impl LSMAdapter {
-    fn get_name(&self, segment_id: &str) -> String {
-        format!("log_{}", segment_id)
-    }
-
-    fn get_metadata_offset(&self, name: &str) -> Result<u64, Error> {
-        let size = self.storage.size(name)?;
+    fn get_metadata_offset(&self, accessor: &Box<dyn StorageAccessor>) -> Result<u64, Error> {
+        let size = accessor.size()?;
 
         let Some(footer_offset) = size.checked_sub(FOOTER_SIZE as u64) else {
             return Error::code(FATAL_ERROR)
@@ -321,7 +353,7 @@ impl LSMAdapter {
                 .throw()
         };
 
-        let footer = self.storage.read(name, footer_offset, FOOTER_SIZE as u64)?;
+        let footer = accessor.read(footer_offset, FOOTER_SIZE as u64)?;
 
         let magic = &footer[0..4];
         if magic != FOOTER_MAGIC {

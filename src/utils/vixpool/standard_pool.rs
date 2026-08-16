@@ -11,20 +11,16 @@ pub struct StandardPool {
     queue_counter: Arc<AtomicUsize>,
 }
 
-pub fn new_standard_pool(thread_size: usize, queue_size: Option<usize>, is_blocking: bool) -> Arc<dyn Pool> {
-    Arc::new(StandardPool::new(thread_size, queue_size, is_blocking))
-}
-
 impl StandardPool {
-    pub fn new(thread_size: usize, queue_size: Option<usize>, is_blocking: bool) -> Self {
+    pub fn new(thread_size: usize, queue_size: Option<usize>, is_blocking: bool) -> Arc<dyn Pool> {
         let pool = ThreadPool::new(thread_size);
 
-        Self {
+        Arc::new(StandardPool {
             pool,
             is_blocking,
             queue_size_opt: queue_size,
             queue_counter: Arc::new(AtomicUsize::new(0)),
-        }
+        })
     }
 }
 

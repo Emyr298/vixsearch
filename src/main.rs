@@ -19,20 +19,29 @@ mod query;
 
 use utils::vixerr;
 
+use crate::{di::Application, utils::vixerr::Error};
+
 fn main() {
     if dotenv().is_err() {
         println!(".env file is not found");
     }
 
     let app = di::register_dependencies();
-    load_data(&app.orchestrator);
+    if let Err(err) = load_data(&app) {
+        panic!("PANIC: {}", &err.message);
+    }
 
     let actix_thread = std::thread::spawn(move || start_actix(app.config, app.orchestrator));
     actix_thread.join().unwrap();
 }
 
-fn load_data(orchestrator: &Arc<dyn orchestrator::Orchestrator>) {
-    orchestrator.load_collection().expect("PANIC: failed to load")
+fn load_data(app: &Application) -> Result<(), Error> {
+    app.orchestrator.load_collection()?;
+
+    let temp_collection_ids: Vec<String> = Vec::new();
+    app.document_loader.load(&temp_collection_ids)?;
+
+    Ok(())
 }
 
 fn start_actix(config: config::Config, orchestrator: Arc<dyn orchestrator::Orchestrator>) {
