@@ -11,14 +11,16 @@ pub enum CollectionStatus {
 
 pub struct CollectionState {
     pub id: String,
+    pub internal_id: String,
     pub status: CollectionStatus,
     pub field_types: HashMap<String, ValueType>,
 }
 
 impl CollectionState {
-    pub fn new(id: &str, fields: &Vec<CreateParamField>, status: CollectionStatus) -> Self {
+    pub fn new(id: &str, internal_id: &str, fields: &Vec<CreateParamField>, status: CollectionStatus) -> Self {
         CollectionState {
             id: id.to_string(),
+            internal_id: internal_id.to_string(),
             status: status,
             field_types: fields.iter()
                 .map(|field| (field.name.clone(), field.field_type.clone()))
@@ -29,6 +31,7 @@ impl CollectionState {
     pub fn from_get_all_port_result_collection(result: &GetAllPortResultCollection, status: CollectionStatus) -> Self {
         CollectionState {
             id: result.id.clone(),
+            internal_id: result.internal_id.clone(),
             status,
             field_types: result.fields.iter()
                 .map(|field| (field.name.clone(), field.field_type.clone()))

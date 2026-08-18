@@ -50,11 +50,11 @@ impl Port for Adapter {
         let _guard = self.commit_lock.read().unwrap();
 
         let result = self.get_latest_commit()?;
-        let collection_ids = result.latest_commit.map(|c| c.collection_ids).unwrap_or(vec![]);
+        let internal_ids = result.latest_commit.map(|c| c.collection_internal_ids).unwrap_or(vec![]);
 
         let mut collections: Vec<GetAllPortResultCollection> = Vec::new();
-        for collection_id in collection_ids {
-            let (schema_store, schema_name) = schema_store_name(&collection_id);
+        for internal_id in internal_ids {
+            let (schema_store, schema_name) = schema_store_name(&internal_id);
             let reader = self.storage.get_reader(&schema_store, &schema_name)?;
 
             let schema_buf = reader.read_all()?;
@@ -71,8 +71,8 @@ impl Port for Adapter {
     }
 
     fn create(&self, param: CreatePortParam) -> Result<(), Error> {
-        let collection_id = param.id.clone();
-        let (store, name) = schema_store_name(&param.id);
+        let internal_id = param.internal_id.clone();
+        let (store, name) = schema_store_name(&internal_id);
         let schema_buf = SchemaBlock::from_create_port_param(param).encode();
 
         let mut schema_writer = self.storage.get_writer(&store, &name)?;
@@ -82,7 +82,7 @@ impl Port for Adapter {
         let _guard = self.commit_lock.write().unwrap();
 
         let result = self.get_latest_commit()?;
-        let commit = Commit::add_collection(&collection_id, result);
+        let commit = Commit::add_collection(&internal_id, result);
 
         let mut commit_writer = self.storage.get_writer(COMMIT_STORE, &commit.name())?;
         let commit_buf = CommitBlock::from_commit(commit).encode();
@@ -91,11 +91,11 @@ impl Port for Adapter {
         commit_writer.commit()
     }
 
-    fn delete(&self, id: &str) -> Result<(), Error> {
+    fn delete_by_internal_id(&self, internal_id: &str) -> Result<(), Error> {
         let _guard = self.commit_lock.write().unwrap();
 
         let result = self.get_latest_commit()?;
-        if let Some(commit) = Commit::delete_collection(id, result) {
+        if let Some(commit) = Commit::delete_collection(internal_id, result) {
             let mut commit_writer = self.storage.get_writer(COMMIT_STORE, &commit.name())?;
             let commit_buf = CommitBlock::from_commit(commit).encode();
 

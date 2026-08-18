@@ -5,8 +5,8 @@ use crate::vixerr::Error;
 
 pub trait Service: Send + Sync {
     fn create(&self, param: CreateParam) -> Result<(), Error>;
-    fn delete(&self, id: &str) -> Result<(), Error>;
-    fn validate(&self, collection_name: &str, document: &Document) -> Result<(), Error>;
+    fn delete_by_id(&self, id: &str) -> Result<(), Error>;
+    fn validate_by_id(&self, collection_name: &str, document: &Document) -> Result<(), Error>;
 }
 
 pub trait Loader: Send + Sync {
@@ -16,5 +16,5 @@ pub trait Loader: Send + Sync {
 pub trait Port: Send + Sync {
     fn get_all(&self) -> Result<GetAllPortResult, Error>;
     fn create(&self, param: CreatePortParam) -> Result<(), Error>;
-    fn delete(&self, id: &str) -> Result<(), Error>;
+    fn delete_by_internal_id(&self, id: &str) -> Result<(), Error>;
 }

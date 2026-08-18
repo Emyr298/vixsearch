@@ -1,12 +1,16 @@
 use std::sync::{Arc, RwLock};
 
 use dashmap::{DashMap, Entry};
+use uuid::Uuid;
 
 use crate::{collection::{service::{Loader, Port, Service}, service_param_result::CreateParam, state::{CollectionState, CollectionStatus}}, document::Document, errcode::{EXISTS, NOT_FOUND, NOT_READY}, utils::vixerr::Error};
 
 pub struct ServiceImpl {
     adapter: Arc<dyn Port>,
-    collection_by_id: DashMap<String, Arc<RwLock<CollectionState>>>
+
+    // in the future, when decide to add alter collection, should reassess rwlock since it will block read mid traffic
+    collection_by_id: DashMap<String, Arc<RwLock<CollectionState>>>,
+    collection_by_internal_id: DashMap<String, Arc<RwLock<CollectionState>>>,
 }
 
 impl ServiceImpl {
@@ -14,6 +18,7 @@ impl ServiceImpl {
         Arc::new(ServiceImpl {
             adapter,
             collection_by_id: DashMap::new(),
+            collection_by_internal_id: DashMap::new(),
         })
     }
 }
@@ -22,18 +27,19 @@ impl Loader for ServiceImpl {
     fn load(&self) -> Result<(), Error> {
         let result = self.adapter.get_all()?;
 
-        let collection_states: Vec<(String, Arc<RwLock<CollectionState>>)> = result.collections.iter()
+        let collection_states: Vec<(String, String, Arc<RwLock<CollectionState>>)> = result.collections.iter()
             .map(|c| CollectionState::from_get_all_port_result_collection(c, CollectionStatus::Loading))
-            .map(|c| (c.id.to_string(), Arc::new(RwLock::new(c))))
+            .map(|c| (c.id.clone(), c.internal_id.clone(), Arc::new(RwLock::new(c))))
             .collect();
 
-        for (id, collection_state) in &collection_states {
+        for (id, internal_id, collection_state) in &collection_states {
             self.collection_by_id.insert(id.to_string(), collection_state.clone());
+            self.collection_by_internal_id.insert(internal_id.to_string(), collection_state.clone());
         }
 
         // TODO: sync
 
-        for (_, collection_state) in &collection_states {
+        for (_, _, collection_state) in &collection_states {
             let mut collection_write = collection_state.write().unwrap();
             collection_write.status = CollectionStatus::Ready;
         }
@@ -53,18 +59,22 @@ impl Service for ServiceImpl {
                 .throw();
         }
 
+        let internal_id = Uuid::new_v4().to_string();
         let collection_arc = Arc::new(RwLock::new(CollectionState::new(
             &param.id,
+            &internal_id,
             &param.fields,
             CollectionStatus::Loading,
         )));
 
         collection_entry.insert(collection_arc.clone()); // early drop for dashmap shard, so it doesn't need to wait
+        self.collection_by_internal_id.insert(internal_id.clone(), collection_arc.clone());
 
         // TODO: sync to document service, etc.
 
-        if let Err(e) = self.adapter.create(param.create_port_param()) {
+        if let Err(e) = self.adapter.create(param.create_port_param(&internal_id)) {
             self.collection_by_id.remove(&param.id);
+            self.collection_by_internal_id.remove(&internal_id);
             return Err(e);
         }
 
@@ -74,42 +84,43 @@ impl Service for ServiceImpl {
         Ok(())
     }
 
-    fn delete(&self, id: &str) -> Result<(), Error> {
-        let collection_ref = match self.collection_by_id.get(id) {
-            Some(c) => c,
+    fn delete_by_id(&self, id: &str) -> Result<(), Error> {
+        let collection_arc = match self.collection_by_id.get(id) {
+            Some(c) => c.clone(),
             None => return Error::code(NOT_FOUND)
                 .message("collection not found")
                 .throw(),
         };
 
-        let collection_arc = collection_ref.value().clone();
-        drop(collection_ref);
+        let internal_id = {
+            let collection = collection_arc.write().unwrap();
+            if collection.status == CollectionStatus::Deleting {
+                return Ok(());
+            }
+            collection.internal_id.clone()
+        };
 
-        let collection = collection_arc.write().unwrap();
-        if collection.status == CollectionStatus::Deleting {
-            return Ok(());
-        }
-
-        if let Err(e) = self.adapter.delete(&collection.id) {
+        if let Err(e) = self.adapter.delete_by_internal_id(&internal_id) {
             return Err(e);
         }
 
         // TODO: sync to document service, etc.
 
         self.collection_by_id.remove(id);
+        self.collection_by_internal_id.remove(&internal_id);
 
         Ok(())
     }
 
-    fn validate(&self, id: &str, document: &Document) -> Result<(), Error> {
-        let collection_ref = match self.collection_by_id.get(id) {
-            Some(c) => c,
+    fn validate_by_id(&self, id: &str, document: &Document) -> Result<(), Error> {
+        let collection_arc = match self.collection_by_id.get(id) {
+            Some(c) => c.clone(),
             None => return Error::code(NOT_FOUND)
                 .message("collection not found")
                 .throw(),
         };
 
-        let collection = collection_ref.value().read().unwrap();
+        let collection = collection_arc.read().unwrap();
         if collection.status != CollectionStatus::Ready {
             return Error::code(NOT_READY)
                 .message("collection not ready or lagging")

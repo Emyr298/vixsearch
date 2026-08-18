@@ -33,9 +33,10 @@ impl CreateParam {
         Ok(())
     }
 
-    pub fn create_port_param(&self) -> CreatePortParam {
+    pub fn create_port_param(&self, internal_id: &str) -> CreatePortParam {
         CreatePortParam {
             id: self.id.to_string(),
+            internal_id: internal_id.to_string(),
             fields: self.fields.iter()
                 .map(|field| field.create_port_param_field())
                 .collect(),

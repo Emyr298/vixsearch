@@ -9,8 +9,8 @@ pub const SCHEMA_MAGIC: &[u8; 4] = b"SCMA";
 pub const COMMIT_STORE: &str = "collection/commit";
 
 // TODO: always up the version in next phase when alter collection exists
-pub fn schema_store_name(collection_id: &str) -> (String, String) {
-    (format!("collection/{}/schema", collection_id), format!("schema_{:016x}", 1))
+pub fn schema_store_name(collection_internal_id: &str) -> (String, String) {
+    (format!("collection/{}/schema", collection_internal_id), format!("schema_{:016x}", 1))
 }
 
 pub struct GetLatestCommitResult {
@@ -43,6 +43,7 @@ pub fn next_commit_number(names: &[String]) -> u64 {
 #[derive(Serialize, Deserialize)]
 pub struct Schema {
     pub id: String,
+    pub internal_id: String,
     pub fields: Vec<SchemaField>,
 }
 
@@ -50,6 +51,7 @@ impl Schema {
     pub fn new(param: CreatePortParam) -> Self {
         Self {
             id: param.id,
+            internal_id: param.internal_id,
             fields: param.fields.into_iter()
                 .map(|f| SchemaField::new(f))
                 .collect(),
@@ -59,6 +61,7 @@ impl Schema {
     pub fn get_all_port_result_collection(self) -> Result<GetAllPortResultCollection, Error> {
         Ok(GetAllPortResultCollection {
             id: self.id,
+            internal_id: self.internal_id,
             fields: self.fields.into_iter()
                 .map(|f| f.get_all_port_result_collection_field())
                 .collect::<Result<Vec<_>, _>>()?,
@@ -150,33 +153,33 @@ impl SchemaBlock {
 #[derive(Serialize, Deserialize)]
 pub struct Commit {
     pub commit_number: u64,
-    pub collection_ids: Vec<String>,
+    pub collection_internal_ids: Vec<String>,
 }
 
 impl Commit {
-    pub fn add_collection(collection_id: &str, result: GetLatestCommitResult) -> Self {
+    pub fn add_collection(internal_id: &str, result: GetLatestCommitResult) -> Self {
         match result.latest_commit {
             Some(mut c) => {
-                c.collection_ids.push(collection_id.to_string());
+                c.collection_internal_ids.push(internal_id.to_string());
                 Commit {
                     commit_number: result.next_number,
-                    collection_ids: c.collection_ids,
+                    collection_internal_ids: c.collection_internal_ids,
                 }
             },
             None => Commit {
                 commit_number: result.next_number,
-                collection_ids: vec![collection_id.to_string()],
+                collection_internal_ids: vec![internal_id.to_string()],
             },
         }
     }
 
-    pub fn delete_collection(collection_id: &str, result: GetLatestCommitResult) -> Option<Self> {
+    pub fn delete_collection(internal_id: &str, result: GetLatestCommitResult) -> Option<Self> {
         match result.latest_commit {
             Some(mut c) => {
-                c.collection_ids.retain(|cid| cid != collection_id);
+                c.collection_internal_ids.retain(|iid| iid != internal_id);
                 Some(Commit {
                     commit_number: result.next_number,
-                    collection_ids: c.collection_ids,
+                    collection_internal_ids: c.collection_internal_ids,
                 })
             },
             None => None,
