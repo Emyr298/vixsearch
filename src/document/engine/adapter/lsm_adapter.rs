@@ -29,7 +29,7 @@ impl LSMAdapter {
 impl LSMPort for LSMAdapter {
     fn get_all_segment_by_collection_id(&self, collection_id: &str) -> Result<GetAllSegmentByCollectionIDPortResult, Error> {
         let store = store(collection_id);
-        let names = self.storage.get_all_name(&store)?;
+        let names = self.storage.get_all_name_sorted(&store)?;
 
         let latest_commit = match latest_commit_name(&names) {
             Some(latest_commit_name) => {

@@ -1,9 +1,6 @@
-mod entity;
-mod instance;
-mod manager;
-mod param_result;
-
-pub use entity::{Collection, Field};
-use instance::CollectionInstance;
-pub use manager::{Manager, Storage, new_manager};
-pub use param_result::{CreateCollectionParam, CreateStorageParam};
+mod adapter;
+mod service;
+mod service_impl;
+mod service_param_result;
+mod port_param_result;
+mod state;

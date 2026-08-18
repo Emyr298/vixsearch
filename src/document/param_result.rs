@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::shared::Value;
+use crate::document::Value;
 
 pub struct InsertParam {
     pub id: String,

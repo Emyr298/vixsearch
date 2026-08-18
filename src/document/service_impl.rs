@@ -1,20 +1,20 @@
 use std::sync::Arc;
 
-use crate::{document::{engine::{self, DOCUMENT_NOT_FOUND}, entity::{Document, key_from_id, key_from_seq_id}, manager::Manager, param_result::InsertParam}, errcode::FATAL_ERROR, utils::vixerr::Error};
+use crate::{document::{Service, engine::{self, DOCUMENT_NOT_FOUND}, entity::{Document, key_from_id, key_from_seq_id}, param_result::InsertParam}, errcode::FATAL_ERROR, utils::vixerr::Error};
 
-pub struct ManagerImpl {
+pub struct ServiceImpl {
     engine: Arc<dyn engine::Engine>,
 }
 
-impl ManagerImpl {
-    pub fn new(engine: Arc<dyn engine::Engine>) -> Arc<dyn Manager> {
-        Arc::new(ManagerImpl {
+impl ServiceImpl {
+    pub fn new(engine: Arc<dyn engine::Engine>) -> Arc<dyn Service> {
+        Arc::new(ServiceImpl {
             engine,
         })
     }
 }
 
-impl Manager for ManagerImpl {
+impl Service for ServiceImpl {
     fn get_by_id(&self, collection_id: &str, document_id: &str) -> Result<Document, Error> {
         let seq_id = self.get_seq_id_by_id(collection_id, document_id)?;
 
@@ -68,7 +68,7 @@ impl Manager for ManagerImpl {
     }
 }
 
-impl ManagerImpl {
+impl ServiceImpl {
     fn get_seq_id_by_id(&self, collection_id: &str, document_id: &str) -> Result<u64, Error> {
         let key = key_from_id(document_id);
 
