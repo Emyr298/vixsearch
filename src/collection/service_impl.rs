@@ -3,10 +3,11 @@ use std::sync::{Arc, RwLock};
 use dashmap::{DashMap, Entry};
 use uuid::Uuid;
 
-use crate::{collection::{service::{Loader, Port, Service}, service_param_result::CreateParam, state::{CollectionState, CollectionStatus}}, document::Document, errcode::{EXISTS, NOT_FOUND, NOT_READY}, utils::vixerr::Error};
+use crate::{collection::{service::{CollectionLoader, CollectionPort, CollectionService}, service_param_result::CreateParam, state::{CollectionState, CollectionStatus, collection_ids}}, document::{Document, DocumentLoader}, errcode::{EXISTS, NOT_FOUND, NOT_READY}, utils::vixerr::Error};
 
 pub struct ServiceImpl {
-    adapter: Arc<dyn Port>,
+    adapter: Arc<dyn CollectionPort>,
+    document_loader: Arc<dyn DocumentLoader>,
 
     // in the future, when decide to add alter collection, should reassess rwlock since it will block read mid traffic
     collection_by_id: DashMap<String, Arc<RwLock<CollectionState>>>,
@@ -14,16 +15,22 @@ pub struct ServiceImpl {
 }
 
 impl ServiceImpl {
-    pub fn new(adapter: Arc<dyn Port>) -> Arc<dyn Service> {
-        Arc::new(ServiceImpl {
+    pub fn new(adapter: Arc<dyn CollectionPort>, document_loader: Arc<dyn DocumentLoader>) -> (Arc<dyn CollectionService>, Arc<dyn CollectionLoader>) {
+        let arc = Arc::new(ServiceImpl {
             adapter,
+            document_loader,
             collection_by_id: DashMap::new(),
             collection_by_internal_id: DashMap::new(),
-        })
+        });
+
+        let service_arc: Arc<dyn CollectionService> = arc.clone();
+        let loader_arc: Arc<dyn CollectionLoader> = arc;
+
+        (service_arc, loader_arc)
     }
 }
 
-impl Loader for ServiceImpl {
+impl CollectionLoader for ServiceImpl {
     fn load(&self) -> Result<(), Error> {
         let result = self.adapter.get_all()?;
 
@@ -37,7 +44,8 @@ impl Loader for ServiceImpl {
             self.collection_by_internal_id.insert(internal_id.to_string(), collection_state.clone());
         }
 
-        // TODO: sync
+        // Sync to other services
+        self.document_loader.load(&collection_ids(&collection_states))?;
 
         for (_, _, collection_state) in &collection_states {
             let mut collection_write = collection_state.write().unwrap();
@@ -48,7 +56,7 @@ impl Loader for ServiceImpl {
     }
 }
 
-impl Service for ServiceImpl {
+impl CollectionService for ServiceImpl {
     fn create(&self, param: CreateParam) -> Result<(), Error> {
         param.validate()?;
 

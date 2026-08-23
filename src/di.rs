@@ -1,31 +1,29 @@
 use std::sync::Arc;
 
-use crate::{collection, config, document::{self, LSMAdapter, LSMEngine, Loader}, orchestrator, storage::{self, file_storage::FileStorage}, utils::vixpool::StandardPool};
+use crate::{collection::{self, CollectionAdapter, CollectionLoader}, config::Config, document::{self, LSMDocumentAdapter, LSMDocumentEngine}, storage::{FileStorage, WormFileStorage}, utils::vixpool::StandardPool};
 
 pub struct Application {
-    pub orchestrator: Arc<dyn orchestrator::Orchestrator>,
-    pub document_loader: Arc<dyn Loader>,
-    pub config: config::Config,
+    pub collection_loader: Arc<dyn CollectionLoader>,
+    pub _config: Config,
 }
 
 impl Application {
-    pub fn new(
-        orchestrator: Arc<dyn orchestrator::Orchestrator>,
-        document_loader: Arc<dyn Loader>,
-        config: config::Config,
+    fn new(
+        collection_loader: Arc<dyn CollectionLoader>,
+        _config: Config,
     ) -> Self {
         Application {
-            orchestrator,
-            document_loader,
-            config,
+            collection_loader,
+            _config,
         }
     }
 }
 
 pub fn register_dependencies() -> Application {
     // Infrastructure
-    let config = config::Config::new();
+    let config = Config::new();
     let storage = FileStorage::new(&config.base_dir);
+    let worm_storage = WormFileStorage::new(&config.base_dir, &config.base_temp_dir);
     let flush_pool = StandardPool::new(
         config.document_flush_thread_size,
         Some(config.document_flush_queue_size),
@@ -33,31 +31,24 @@ pub fn register_dependencies() -> Application {
     );
 
     // Adapter
-    let lsm_adapter = LSMAdapter::new(
-        storage,
+    let lsm_adapter = LSMDocumentAdapter::new(
+        storage.clone(),
         config.document_block_min_content_size,
         config.document_bloomfilter_false_positive_probability,
     );
+    let collection_adapter = CollectionAdapter::new(worm_storage);
 
-    // Manager/Engine
-    let (document_engine, document_loader) = LSMEngine::new(
+    // Service/Engine
+    let (document_engine, document_engine_loader) = LSMDocumentEngine::new(
         lsm_adapter,
         flush_pool,
         config.document_flush_byte_size_threshold,
     );
-    let document_manager = document::ManagerImpl::new(document_engine);
-    
-    // Old
-    let collection_storage =
-        storage::new_storage(&config.base_dir, &config.collection_metadata_filename);
-    let collection_manager = collection::new_manager(collection_storage);
-
-    let orchestrator: Arc<dyn orchestrator::Orchestrator> =
-        orchestrator::new_orchestrator(collection_manager).into();
+    let (_document_service, document_loader) = document::DocumentServiceImpl::new(document_engine, document_engine_loader.clone());
+    let (_collection_service, collection_loader) = collection::ServiceImpl::new(collection_adapter, document_loader);
 
     return Application::new(
-        orchestrator,
-        document_loader,
-         config,
+        collection_loader,
+        config,
     );
 }

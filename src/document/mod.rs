@@ -7,4 +7,4 @@ mod param_result;
 pub use service::*;
 pub use service_impl::*;
 pub use entity::*;
-pub use engine::*;
+pub use engine::{LSMDocumentEngine, LSMDocumentAdapter};

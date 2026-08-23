@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{errcode::PARSE_ERROR, utils::vixerr::Error};
 
 // pub const IDENTIFIER_FIELD: &str = "_id";
@@ -12,6 +14,7 @@ pub fn key_from_seq_id(seq_id: &u64) -> Vec<u8> {
     [b"seq_", &seq_id.to_le_bytes()[..]].concat()
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Document {
     pub id: String,
     pub seq_id: String,
@@ -46,6 +49,7 @@ impl ValueType {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub enum Value {
     String(String),
     Integer(i64),

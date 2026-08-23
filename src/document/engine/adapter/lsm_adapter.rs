@@ -3,22 +3,22 @@ use std::sync::Arc;
 use fastbloom::BloomFilter;
 use uuid::Uuid;
 
-use crate::{document::engine::{LSMPort, adapter::lsm_helper::{BLOCK_HEADER_SIZE, BLOCK_MAGIC, Commit, FOOTER_MAGIC, FOOTER_SIZE, METADATA_HEADER_SIZE, METADATA_MAGIC, get_latest_commit, latest_commit_name, name, store}, lsm_port_param_result::{GetAllSegmentByCollectionIDPortResult, GetMetadataPortResult}, lsm_state::CollectionBuffer}, errcode::FATAL_ERROR, storage::{Storage, StorageAccessor}, utils::vixerr::Error};
+use crate::{document::engine::{LSMDocumentPort, adapter::lsm_helper::{BLOCK_HEADER_SIZE, BLOCK_MAGIC, Commit, FOOTER_MAGIC, FOOTER_SIZE, METADATA_HEADER_SIZE, METADATA_MAGIC, get_latest_commit, latest_commit_name, name, store}, lsm_port_param_result::{GetAllSegmentByCollectionIDPortResult, GetMetadataPortResult}, lsm_state::CollectionBuffer}, errcode::FATAL_ERROR, storage::{Storage, StorageAccessor}, utils::vixerr::Error};
 
 // TODO: can try zero copy for cleaner way
-pub struct LSMAdapter {
+pub struct LSMDocumentAdapter {
     storage: Arc<dyn Storage>,
     min_document_content_size: usize,
     false_positive_probability: f64,
 }
 
-impl LSMAdapter {
+impl LSMDocumentAdapter {
     pub fn new(
         storage: Arc<dyn Storage>,
         min_document_content_size: usize,
         false_positive_probability: f64,
-    ) -> Arc<dyn LSMPort> {
-        Arc::new(LSMAdapter {
+    ) -> Arc<dyn LSMDocumentPort> {
+        Arc::new(LSMDocumentAdapter {
             storage: storage,
             min_document_content_size: min_document_content_size,
             false_positive_probability: false_positive_probability,
@@ -26,7 +26,7 @@ impl LSMAdapter {
     }
 }
 
-impl LSMPort for LSMAdapter {
+impl LSMDocumentPort for LSMDocumentAdapter {
     fn get_all_segment_by_collection_id(&self, collection_id: &str) -> Result<GetAllSegmentByCollectionIDPortResult, Error> {
         let store = store(collection_id);
         let names = self.storage.get_all_name_sorted(&store)?;
@@ -210,7 +210,7 @@ impl LSMPort for LSMAdapter {
     }
 }
 
-impl LSMAdapter {
+impl LSMDocumentAdapter {
     fn write_documents(&self, accessor: &Box<dyn StorageAccessor>, kv_pairs: &Vec<(Vec<u8>, Vec<u8>)>) -> Result<(u64, Vec<u64>), Error> {
         let mut block_offsets: Vec<u64> = Vec::new();
         let mut block_content: Vec<u8> = Vec::new();
@@ -343,7 +343,7 @@ impl LSMAdapter {
     }
 }
 
-impl LSMAdapter {
+impl LSMDocumentAdapter {
     fn get_metadata_offset(&self, accessor: &Box<dyn StorageAccessor>) -> Result<u64, Error> {
         let size = accessor.size()?;
 

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::{Arc, RwLock}};
 
 use crate::{collection::{port_param_result::GetAllPortResultCollection, service_param_result::CreateParamField}, document::{Document, ValueType}, errcode::PARSE_ERROR, utils::vixerr::Error};
 
@@ -65,4 +65,10 @@ impl CollectionState {
 
         Ok(())
     }
+}
+
+pub fn collection_ids(collection_states: &Vec<(String, String, Arc<RwLock<CollectionState>>)>) -> Vec<String> {
+    collection_states.iter()
+        .map(|cs| cs.0.clone())
+        .collect()
 }

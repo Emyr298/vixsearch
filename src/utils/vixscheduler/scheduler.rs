@@ -6,9 +6,9 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
-    pub fn new(taskFn: impl Fn() + Send + Sync + 'static, interval: Duration) -> Self {
+    pub fn new(task_fn: impl Fn() + Send + Sync + 'static, interval: Duration) -> Self {
         Scheduler {
-            task_fn: Arc::new(taskFn),
+            task_fn: Arc::new(task_fn),
             interval,
         }
     }

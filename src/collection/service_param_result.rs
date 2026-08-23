@@ -42,14 +42,6 @@ impl CreateParam {
                 .collect(),
         }
     }
-
-//     pub fn into_create_storage_param(self, id: String) -> CreateStorageParam {
-//         CreateStorageParam {
-//             id,
-//             name: self.name,
-//             fields: self.fields,
-//         }
-//     }
 }
 
 #[derive(Clone)]

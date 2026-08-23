@@ -1,13 +1,11 @@
 use config::{Environment, File, FileFormat};
-use serde::{Deserialize};
-
-use crate::defaults::ConfigDefaults;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub address: String,
     pub base_dir: String,
-    pub collection_metadata_filename: String,
+    pub base_temp_dir: String,
 
     pub document_block_min_content_size: usize,
     pub document_bloomfilter_false_positive_probability: f64,
@@ -27,5 +25,18 @@ impl Config {
             .expect("Failed to build config")
             .try_deserialize::<Config>()
             .expect("Failed to deserialize config")
+    }
+}
+
+#[derive(Serialize)]
+struct ConfigDefaults {
+    address: &'static str,
+}
+
+impl Default for ConfigDefaults {
+    fn default() -> Self {
+        Self {
+            address: "0.0.0.0:8080",
+        }
     }
 }

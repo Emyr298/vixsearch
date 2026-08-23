@@ -2,19 +2,19 @@ use std::sync::{Arc, RwLock};
 
 use crate::collection::adapter::helper::{COMMIT_STORE, Commit, CommitBlock, GetLatestCommitResult, SchemaBlock, next_commit_number, schema_store_name};
 use crate::collection::port_param_result::{CreatePortParam, GetAllPortResult, GetAllPortResultCollection};
-use crate::collection::service::Port;
+use crate::collection::service::CollectionPort;
 use crate::errcode::PARSE_ERROR;
 use crate::storage::WormStorage;
 use crate::utils::vixerr::Error;
 
-struct Adapter {
+pub struct CollectionAdapter {
     storage: Arc<dyn WormStorage>,
     commit_lock: RwLock<()>,
 }
 
-impl Adapter {
-    fn new(storage: Arc<dyn WormStorage>) -> Arc<dyn Port> {
-        Arc::new(Adapter {
+impl CollectionAdapter {
+    pub fn new(storage: Arc<dyn WormStorage>) -> Arc<dyn CollectionPort> {
+        Arc::new(CollectionAdapter {
             storage: storage,
             commit_lock: RwLock::new(()),
         })
@@ -45,7 +45,7 @@ impl Adapter {
     }
 }
 
-impl Port for Adapter {
+impl CollectionPort for CollectionAdapter {
     fn get_all(&self) -> Result<GetAllPortResult, Error> {
         let _guard = self.commit_lock.read().unwrap();
 

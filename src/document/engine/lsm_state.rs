@@ -76,9 +76,9 @@ impl CollectionState {
 
     /// Returns a vector of all segment IDs in the collection, across all levels sorted from L0 to Ln.
     pub fn get_segment_ids(&self) -> Vec<String> {
-        let levels = self.segment_levels.load();
-        levels.iter()
-            .flat_map(|level| level.segment_ids.iter().cloned())
+        let segments = self.segments.load();
+        segments.iter()
+            .map(|s| s.id.clone())
             .collect()
     }
 
