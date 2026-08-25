@@ -3,7 +3,7 @@ use std::sync::Arc;
 use fastbloom::BloomFilter;
 use uuid::Uuid;
 
-use crate::{document::engine::{LSMDocumentPort, adapter::lsm_helper::{BLOCK_HEADER_SIZE, BLOCK_MAGIC, Commit, FOOTER_MAGIC, FOOTER_SIZE, METADATA_HEADER_SIZE, METADATA_MAGIC, get_latest_commit, latest_commit_name, name, store}, lsm_port_param_result::{GetAllSegmentByCollectionIDPortResult, GetMetadataPortResult}, lsm_state::CollectionBuffer}, errcode::FATAL_ERROR, storage::{Storage, StorageAccessor}, utils::vixerr::Error};
+use crate::{document::engine::{LSMDocumentPort, adapter::lsm_helper::{BLOCK_HEADER_SIZE, BLOCK_MAGIC, Commit, FOOTER_MAGIC, FOOTER_SIZE, METADATA_HEADER_SIZE, METADATA_MAGIC, get_latest_commit, latest_commit_name, name, store}, lsm_entity::SegmentMetadata, lsm_port_param_result::GetAllSegmentByCollectionIDPortResult, lsm_state::CollectionBuffer}, errcode::FATAL_ERROR, storage::{Storage, StorageAccessor}, utils::vixerr::Error};
 
 // TODO: can try zero copy for cleaner way
 pub struct LSMDocumentAdapter {
@@ -42,7 +42,7 @@ impl LSMDocumentPort for LSMDocumentAdapter {
         Ok(latest_commit.get_all_segment_by_collection_id_port_result())
     }
 
-    fn get_metadata(&self, collection_id: &str, segment_id: &str) -> Result<GetMetadataPortResult, Error> {
+    fn get_metadata(&self, collection_id: &str, segment_id: &str) -> Result<SegmentMetadata, Error> {
         let store = store(collection_id);
         let name = name(segment_id);
         let accessor = self.storage.open(&store, &name)?;
@@ -112,7 +112,7 @@ impl LSMDocumentPort for LSMDocumentAdapter {
         let biggest_key_offset = biggest_key_len_offset + 8;
         let biggest_key = &metadata_content[biggest_key_offset..(biggest_key_offset + biggest_key_len)].to_vec();
 
-        Ok(GetMetadataPortResult{
+        Ok(SegmentMetadata{
             key_block_offsets: offsets,
             filter_hash_cnt,
             filter_bits,
@@ -181,32 +181,19 @@ impl LSMDocumentPort for LSMDocumentAdapter {
         Ok(kv_pairs)
     }
 
-    fn flush_segment(&self, collection_id: &str, collection_buffer: Arc<CollectionBuffer>) -> Result<(), Error> {
-        let segment_id = Uuid::new_v4().to_string();
-
+    fn flush_segment(&self, collection_id: &str, segment_id: &str, sorted_key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<SegmentMetadata, Error> {
         let store = store(collection_id);
-        let name = name(&segment_id);
-
-        if collection_buffer.map.len() == 0 {
-            return Ok(());
-        }
-
-        let mut kv_pairs: Vec<_> = collection_buffer.map
-            .iter()
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
-            .collect();
-
-        kv_pairs.sort_by(|a, b| a.0.cmp(&b.0));
+        let name = name(segment_id);
 
         let accessor = self.storage.open(&store, &name)?;
 
-        let (metadata_offset, block_offsets) = self.write_documents(&accessor, &kv_pairs)?;
-        let footer_offset = self.write_metadata(&accessor, metadata_offset, &kv_pairs, block_offsets)?;
+        let (metadata_offset, block_offsets) = self.write_documents(&accessor, &sorted_key_values)?;
+        let (footer_offset, segment_metadata) = self.write_metadata(&accessor, metadata_offset, &sorted_key_values, block_offsets)?;
         self.write_footer(&accessor, footer_offset, metadata_offset)?;
 
         accessor.flush()?;
 
-        Ok(())
+        Ok(segment_metadata)
     }
 }
 
@@ -260,7 +247,7 @@ impl LSMDocumentAdapter {
     // <META 4 byte><CRC 4 byte><METADATA LEN 8 byte><OFFSETS LEN 8 byte><OFFSETS>
     // <BLOOMFILTER HASH CNT 4 byte><BLOOMFILTER BITS LEN 8 byte><BF BITS>
     // <SMALLEST KEY LEN><SMALLEST KEY><BIGGEST KEY LEN><BIGGEST KEY>
-    fn write_metadata(&self, writer: &Box<dyn StorageAccessor>, offset: u64, kv_pairs: &Vec<(Vec<u8>, Vec<u8>)>, block_offsets: Vec<u64>) -> Result<u64, Error> {
+    fn write_metadata(&self, writer: &Box<dyn StorageAccessor>, offset: u64, kv_pairs: &Vec<(Vec<u8>, Vec<u8>)>, block_offsets: Vec<u64>) -> Result<(u64, SegmentMetadata), Error> {
         let offsets_bytes = rmp_serde::to_vec(&block_offsets).unwrap();
         let offsets_len = (offsets_bytes.len() as u64).to_le_bytes();
 
@@ -289,6 +276,14 @@ impl LSMDocumentAdapter {
                 .throw();
         };
         let biggest_key_len = (biggest_key.len() as u64).to_le_bytes();
+
+        let segment_metadata = SegmentMetadata {
+            key_block_offsets: block_offsets,
+            filter_hash_cnt: u32::from_le_bytes(filter_hashes),
+            filter_bits: filter.iter().collect(),
+            smallest_key: smallest_key.clone(),
+            biggest_key: biggest_key.clone(),
+        };
 
         let content_size = offsets_len.len()
             + offsets_bytes.len()
@@ -324,7 +319,7 @@ impl LSMDocumentAdapter {
         writer.write(offset, &buf)?;
 
         let next_offset = offset + (buf.len() as u64);
-        Ok(next_offset)
+        Ok((next_offset, segment_metadata))
     }
 
     // <FOOT 4 byte><CRC 4 byte><METADATA OFFSET 8 byte>
