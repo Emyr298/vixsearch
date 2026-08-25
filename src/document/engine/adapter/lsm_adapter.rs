@@ -195,6 +195,13 @@ impl LSMDocumentPort for LSMDocumentAdapter {
 
         Ok(segment_metadata)
     }
+    
+    fn archive_segment(&self, collection_id: &str, segment_id: &str) -> Result<(), Error> {
+        let store = store(collection_id);
+        let name = name(segment_id);
+
+        self.storage.close(&store, &name)
+    }
 }
 
 impl LSMDocumentAdapter {

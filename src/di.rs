@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{collection::{self, CollectionAdapter, CollectionLoader}, config::Config, document::{self, LSMDocumentAdapter, LSMDocumentEngine}, storage::{FileStorage, WormFileStorage}, utils::vixpool::StandardPool};
+use crate::{collection::{self, CollectionAdapter, CollectionLoader}, config::Config, document::{self, LSMDocumentAdapter, LSMDocumentEngine}, storage::{FileStorage, WormFileStorage}, utils::{observer::observer_group::ObserverGroup, vixpool::StandardPool}};
 
 pub struct Application {
     pub collection_loader: Arc<dyn CollectionLoader>,
@@ -39,13 +39,13 @@ pub fn register_dependencies() -> Application {
     let collection_adapter = CollectionAdapter::new(worm_storage);
 
     // Service/Engine
-    let (document_engine, document_engine_loader) = LSMDocumentEngine::new(
+    let (document_engine, document_engine_collection_lifecycle) = LSMDocumentEngine::new(
         lsm_adapter,
         flush_pool,
         config.document_flush_byte_size_threshold,
     );
-    let (_document_service, document_loader) = document::DocumentServiceImpl::new(document_engine, document_engine_loader.clone());
-    let (_collection_service, collection_loader) = collection::ServiceImpl::new(collection_adapter, document_loader);
+    let (_document_service, document_collection_lifecycle) = document::DocumentServiceImpl::new(document_engine, document_engine_collection_lifecycle.clone());
+    let (_collection_service, collection_loader) = collection::ServiceImpl::new(collection_adapter, document_collection_lifecycle);
 
     return Application::new(
         collection_loader,

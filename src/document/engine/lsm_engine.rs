@@ -3,7 +3,7 @@ use std::{hint::spin_loop, sync::{Arc, Mutex, atomic::Ordering}};
 use dashmap::DashMap;
 use uuid::Uuid;
 
-use crate::{document::engine::{COMMIT_IN_PROGRESS, DocumentEngineLifecycle, engine::{DocumentEngine, LSMDocumentPort}, errors::{COLLECTION_NOT_FOUND, DOCUMENT_NOT_FOUND}, lsm_state::{CollectionState, SegmentState}}, errcode, utils::{vixalg, vixerr::Error, vixpool::{POOL_QUEUE_FULL, Pool}}};
+use crate::{document::engine::{COMMIT_IN_PROGRESS, DocumentEngineCollectionLifecycle, engine::{DocumentEngine, LSMDocumentPort}, errors::{COLLECTION_NOT_FOUND, DOCUMENT_NOT_FOUND}, lsm_entity::{CollectionStateDropEvent, SegmentStateDropEvent}, lsm_state::{CollectionState, SegmentState}}, errcode::{self, FATAL_ERROR}, utils::{observer::{observer::{Observer, ObserverGroupReader}, observer_group::ObserverGroup}, vixalg, vixerr::Error, vixpool::{POOL_QUEUE_FULL, Pool}}};
 
 pub struct LSMDocumentEngine {
     adapter: Arc<dyn LSMDocumentPort>,
@@ -11,6 +11,8 @@ pub struct LSMDocumentEngine {
     segment_by_id: Arc<DashMap<String, Arc<SegmentState>>>,
     flush_pool: Arc<dyn Pool>,
     flush_byte_size_threshold: usize,
+    collection_drop_observers: Arc<dyn ObserverGroupReader<CollectionStateDropEvent>>,
+    segment_drop_observers: Arc<dyn ObserverGroupReader<SegmentStateDropEvent>>,
 }
 
 impl LSMDocumentEngine {
@@ -18,28 +20,37 @@ impl LSMDocumentEngine {
         adapter: Arc<dyn LSMDocumentPort>,
         flush_pool: Arc<dyn Pool>,
         flush_threshold: usize,
-    ) -> (Arc<dyn DocumentEngine>, Arc<dyn DocumentEngineLifecycle>) {
+    ) -> (Arc<dyn DocumentEngine>, Arc<dyn DocumentEngineCollectionLifecycle>) {
+        let (collection_drop_observers_reader, collection_drop_observers_writer) = ObserverGroup::new(Vec::<Arc<dyn Observer<CollectionStateDropEvent>>>::new());
+        let (segment_drop_observers_reader, segment_drop_observers_writer) = ObserverGroup::new(Vec::<Arc<dyn Observer<SegmentStateDropEvent>>>::new());
+
         let lsm_engine = Arc::new(LSMDocumentEngine {
             adapter,
             collection_by_id: DashMap::new(),
             segment_by_id: Arc::new(DashMap::new()),
             flush_pool,
             flush_byte_size_threshold: flush_threshold,
+            collection_drop_observers: collection_drop_observers_reader,
+            segment_drop_observers: segment_drop_observers_reader,
         });
 
+        collection_drop_observers_writer.register(lsm_engine.clone());
+        segment_drop_observers_writer.register(lsm_engine.clone());
+
         let engine: Arc<dyn DocumentEngine> = lsm_engine.clone();
-        let loader: Arc<dyn DocumentEngineLifecycle> = lsm_engine;
+        let loader: Arc<dyn DocumentEngineCollectionLifecycle> = lsm_engine;
+        let collection_drop_observer: Arc<dyn Observer<CollectionStateDropEvent>>;
 
         return (engine, loader);
     }
 }
 
-impl DocumentEngineLifecycle for LSMDocumentEngine {
+impl DocumentEngineCollectionLifecycle for LSMDocumentEngine {
     fn load_collections(&self, collection_ids: &[String]) -> Result<(), Error> {
         for collection_id in collection_ids {
             let result = self.adapter.get_all_segment_by_collection_id(collection_id)?;
 
-            let collection_state = Arc::new(CollectionState::from_get_all_segment_by_collection_id_port_result(collection_id, result));
+            let collection_state = Arc::new(CollectionState::from_get_all_segment_by_collection_id_port_result(collection_id, result, self.collection_drop_observers.clone()));
             self.collection_by_id.insert(collection_id.to_string(), collection_state.clone());
 
             for segment_id in &collection_state.get_segment_ids() {
@@ -54,13 +65,36 @@ impl DocumentEngineLifecycle for LSMDocumentEngine {
     }
 
     fn add_collection(&self, collection_id: &str) -> Result<(), Error> {
-        let collection_state = Arc::new(CollectionState::new(collection_id));
+        let collection_state = Arc::new(CollectionState::new(collection_id, self.collection_drop_observers.clone()));
         self.collection_by_id.insert(collection_id.to_string(), collection_state);
         Ok(())
     }
 
+    // this method stops new CRUD queries on collection/segment, but old one that already
+    // kept their references (arc) still continues and will be closed on all arc drops
     fn delete_collection(&self, collection_id: &str) -> Result<(), Error> {
-        todo!()
+        let collection = match self.collection_by_id.remove(collection_id) {
+            None => return Ok(()),
+            Some((key, value)) => value,
+        };
+        
+        Ok(())
+    }
+}
+
+impl Observer<CollectionStateDropEvent> for LSMDocumentEngine {
+    fn observe(&self, event: &CollectionStateDropEvent) {
+        for segment_id in &event.segment_ids {
+            self.segment_by_id.remove(segment_id);
+        }
+    }
+}
+
+impl Observer<SegmentStateDropEvent> for LSMDocumentEngine {
+    fn observe(&self, event: &SegmentStateDropEvent) {
+        if let Err(e) = self.adapter.archive_segment(&event.collection_id, &event.id) {
+            println!("failed to archive segment {}: {}", &event.id, e.message)
+        }
     }
 }
 

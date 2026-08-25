@@ -23,3 +23,12 @@ impl SegmentMetadata {
         }
     }
 }
+
+pub struct CollectionStateDropEvent {
+    pub segment_ids: Vec<String>,
+}
+
+pub struct SegmentStateDropEvent {
+    pub id: String,
+    pub collection_id: String,
+}

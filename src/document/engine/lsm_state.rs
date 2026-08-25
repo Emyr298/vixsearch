@@ -5,7 +5,7 @@ use dashmap::{DashMap, iter::Iter, mapref::multiple::RefMulti};
 use fastbloom::BloomFilter;
 use rpds::{Vector, VectorSync};
 
-use crate::{document::engine::{COMMIT_IN_PROGRESS, lsm_port_param_result::GetAllSegmentByCollectionIDPortResult, lsm_state::BufferState::Committing}, errcode::{self, FATAL_ERROR, SYSTEM_ERROR}, utils::vixerr::Error};
+use crate::{document::engine::{COMMIT_IN_PROGRESS, lsm_entity::CollectionStateDropEvent, lsm_port_param_result::GetAllSegmentByCollectionIDPortResult, lsm_state::BufferState::Committing}, errcode::{self, FATAL_ERROR, SYSTEM_ERROR}, utils::{observer::observer::{Observer, ObserverGroupReader}, vixerr::Error}};
 
 struct CollectionBuffer {
     byte_size: AtomicUsize,
@@ -88,10 +88,11 @@ pub struct CollectionState {
     commit_lock: Mutex<()>,
     buffer: ArcSwap<BufferState>,
     segments: ArcSwap<VectorSync<Arc<CollectionSegmentState>>>, // ascending by (level, creation)
+    drop_observers: Arc<dyn ObserverGroupReader<CollectionStateDropEvent>>,
 }
 
 impl CollectionState {
-    pub fn new(id: &str) -> Self {
+    pub fn new(id: &str, drop_observers: Arc<dyn ObserverGroupReader<CollectionStateDropEvent>>) -> Self {
         Self {
             id: id.to_string(),
             commit_lock: Mutex::new(()),
@@ -99,10 +100,11 @@ impl CollectionState {
                 buffer: Arc::new(CollectionBuffer::new()),
             }),
             segments: ArcSwap::from_pointee(VectorSync::new_sync()),
+            drop_observers,
         }
     }
 
-    pub fn from_get_all_segment_by_collection_id_port_result(id: &str, result: GetAllSegmentByCollectionIDPortResult) -> Self {
+    pub fn from_get_all_segment_by_collection_id_port_result(id: &str, result: GetAllSegmentByCollectionIDPortResult, drop_observers: Arc<dyn ObserverGroupReader<CollectionStateDropEvent>>) -> Self {
         let segments: VectorSync<Arc<CollectionSegmentState>> = result.segments.iter()
             .map(|s| Arc::new(CollectionSegmentState {
                 id: s.id.clone(),
@@ -117,6 +119,7 @@ impl CollectionState {
                 buffer: Arc::new(CollectionBuffer::new()),
             }),
             segments: ArcSwap::from_pointee(segments),
+            drop_observers,
         }
     }
 
@@ -229,10 +232,21 @@ impl CollectionState {
     }
 }
 
+impl Drop for CollectionState {
+    fn drop(&mut self) {
+        let event = CollectionStateDropEvent {
+            segment_ids: self.get_segment_ids(),
+        };
+
+        for observer in self.drop_observers.list().iter() {
+            observer.observe(&event);
+        }
+    }
+}
+
 pub struct CollectionSegmentState {
     pub id: String,
     pub level: u32,
-    // TODO: inflight when implementing compaction (segment can be erased)
 }
 
 pub struct CommitSession<'a> {

@@ -3,11 +3,11 @@ use std::sync::{Arc, RwLock};
 use dashmap::{DashMap, Entry};
 use uuid::Uuid;
 
-use crate::{collection::{service::{CollectionLoader, CollectionPort, CollectionService}, service_param_result::CreateParam, state::{CollectionState, CollectionStatus, collection_ids}}, document::{Document, DocumentLoader}, errcode::{EXISTS, NOT_FOUND, NOT_READY}, utils::vixerr::Error};
+use crate::{collection::{service::{CollectionLoader, CollectionPort, CollectionService}, service_param_result::CreateParam, state::{CollectionState, CollectionStatus, collection_ids}}, document::{Document, DocumentCollectionLifecycle}, errcode::{EXISTS, NOT_FOUND, NOT_READY}, utils::vixerr::Error};
 
 pub struct ServiceImpl {
     adapter: Arc<dyn CollectionPort>,
-    document_loader: Arc<dyn DocumentLoader>,
+    document_collection_lifecycle: Arc<dyn DocumentCollectionLifecycle>,
 
     // in the future, when decide to add alter collection, should reassess rwlock since it will block read mid traffic
     collection_by_id: DashMap<String, Arc<RwLock<CollectionState>>>,
@@ -15,10 +15,10 @@ pub struct ServiceImpl {
 }
 
 impl ServiceImpl {
-    pub fn new(adapter: Arc<dyn CollectionPort>, document_loader: Arc<dyn DocumentLoader>) -> (Arc<dyn CollectionService>, Arc<dyn CollectionLoader>) {
+    pub fn new(adapter: Arc<dyn CollectionPort>, document_collection_lifecycle: Arc<dyn DocumentCollectionLifecycle>) -> (Arc<dyn CollectionService>, Arc<dyn CollectionLoader>) {
         let arc = Arc::new(ServiceImpl {
             adapter,
-            document_loader,
+            document_collection_lifecycle,
             collection_by_id: DashMap::new(),
             collection_by_internal_id: DashMap::new(),
         });
@@ -45,7 +45,7 @@ impl CollectionLoader for ServiceImpl {
         }
 
         // Sync to other services
-        self.document_loader.load(&collection_ids(&collection_states))?;
+        self.document_collection_lifecycle.load_collections(&collection_ids(&collection_states))?;
 
         for (_, _, collection_state) in &collection_states {
             let mut collection_write = collection_state.write().unwrap();
@@ -80,7 +80,8 @@ impl CollectionService for ServiceImpl {
         collection_entry.insert(collection_arc.clone()); // early drop for dashmap shard, so it doesn't need to wait
         self.collection_by_internal_id.insert(internal_id.clone(), collection_arc.clone());
 
-        // TODO: sync to document service, etc.
+        // Sync to other services
+        self.document_collection_lifecycle.add_collection(&internal_id)?;
 
         if let Err(e) = self.adapter.create(param.create_port_param(&internal_id)) {
             self.collection_by_id.remove(&param.id);
@@ -114,7 +115,8 @@ impl CollectionService for ServiceImpl {
             return Err(e);
         }
 
-        // TODO: sync to document service, etc.
+        // Sync to other services
+        self.document_collection_lifecycle.delete_collection(&internal_id)?;
 
         self.collection_by_id.remove(id);
         self.collection_by_internal_id.remove(&internal_id);

@@ -1,29 +1,37 @@
 use std::sync::Arc;
 
-use crate::{document::{DocumentLoader, DocumentService, engine::{self, DOCUMENT_NOT_FOUND, DocumentEngine, DocumentEngineLifecycle}, entity::{Document, key_from_id, key_from_seq_id}, param_result::InsertParam}, errcode::FATAL_ERROR, utils::vixerr::Error};
+use crate::{document::{DocumentCollectionLifecycle, DocumentService, engine::{self, DOCUMENT_NOT_FOUND, DocumentEngine, DocumentEngineCollectionLifecycle}, entity::{Document, key_from_id, key_from_seq_id}, param_result::InsertParam}, errcode::FATAL_ERROR, utils::vixerr::Error};
 
 pub struct DocumentServiceImpl {
     engine: Arc<dyn DocumentEngine>,
-    engine_loader: Arc<dyn DocumentEngineLifecycle>
+    engine_collection_lifecycle: Arc<dyn DocumentEngineCollectionLifecycle>
 }
 
 impl DocumentServiceImpl {
-    pub fn new(engine: Arc<dyn engine::DocumentEngine>, engine_loader: Arc<dyn DocumentEngineLifecycle>) -> (Arc<dyn DocumentService>, Arc<dyn DocumentLoader>) {
+    pub fn new(engine: Arc<dyn engine::DocumentEngine>, engine_loader: Arc<dyn DocumentEngineCollectionLifecycle>) -> (Arc<dyn DocumentService>, Arc<dyn DocumentCollectionLifecycle>) {
         let arc = Arc::new(DocumentServiceImpl {
             engine,
-            engine_loader,
+            engine_collection_lifecycle: engine_loader,
         });
 
         let service_arc: Arc<dyn DocumentService> = arc.clone();
-        let loader_arc: Arc<dyn DocumentLoader> = arc;
+        let lifecycle_arc: Arc<dyn DocumentCollectionLifecycle> = arc;
 
-        (service_arc, loader_arc)
+        (service_arc, lifecycle_arc)
     }
 }
 
-impl DocumentLoader for DocumentServiceImpl {
-    fn load(&self, collection_ids: &[String]) -> Result<(), Error> {
-        self.engine_loader.load_collections(collection_ids)
+impl DocumentCollectionLifecycle for DocumentServiceImpl {
+    fn load_collections(&self, collection_ids: &[String]) -> Result<(), Error> {
+        self.engine_collection_lifecycle.load_collections(collection_ids)
+    }
+    
+    fn add_collection(&self, collection_id: &str) -> Result<(), Error> {
+        self.engine_collection_lifecycle.add_collection(collection_id)
+    }
+    
+    fn delete_collection(&self, collection_id: &str) -> Result<(), Error> {
+        self.engine_collection_lifecycle.delete_collection(collection_id)
     }
 }
 

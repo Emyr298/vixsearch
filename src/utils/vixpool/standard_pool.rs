@@ -24,6 +24,7 @@ impl StandardPool {
     }
 }
 
+// TODO: handle panics on thread
 impl Pool for StandardPool {
     fn submit(&self, func: Box<dyn FnOnce() + Send + 'static>) -> Result<(), Error> {
         if let Some(queue_size) = self.queue_size_opt {

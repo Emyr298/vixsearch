@@ -69,6 +69,6 @@ impl CollectionState {
 
 pub fn collection_ids(collection_states: &Vec<(String, String, Arc<RwLock<CollectionState>>)>) -> Vec<String> {
     collection_states.iter()
-        .map(|cs| cs.0.clone())
+        .map(|cs| cs.1.clone())
         .collect()
 }

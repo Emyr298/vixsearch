@@ -6,6 +6,8 @@ pub trait DocumentService: Send + Sync {
     fn insert(&self, collection_id: &str, document: InsertParam) -> Result<(), Error>;
 }
 
-pub trait DocumentLoader: Send + Sync {
-    fn load(&self, collection_ids: &[String]) -> Result<(), Error>;
+pub trait DocumentCollectionLifecycle: Send + Sync {
+    fn load_collections(&self, collection_ids: &[String]) -> Result<(), Error>;
+    fn add_collection(&self, collection_id: &str) -> Result<(), Error>;
+    fn delete_collection(&self, collection_id: &str) -> Result<(), Error>;
 }
