@@ -7,8 +7,10 @@ pub trait DocumentEngine: Send + Sync {
     fn insert(&self, collection_id: &str, key: &[u8], value: &[u8]) -> Result<(), Error>;
 }
 
-pub trait DocumentEngineLoader: Send + Sync {
-    fn load(&self, collection_ids: &[String]) -> Result<(), Error>;
+pub trait DocumentEngineLifecycle: Send + Sync {
+    fn load_collections(&self, collection_ids: &[String]) -> Result<(), Error>;
+    fn add_collection(&self, collection_id: &str) -> Result<(), Error>;
+    fn delete_collection(&self, collection_id: &str) -> Result<(), Error>;
 }
 
 pub trait LSMDocumentPort: Send + Sync {

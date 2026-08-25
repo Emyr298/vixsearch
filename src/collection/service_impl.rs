@@ -52,6 +52,8 @@ impl CollectionLoader for ServiceImpl {
             collection_write.status = CollectionStatus::Ready;
         }
 
+        // TODO: need to rerun uncommitted translog queries (but it should be query service's responsibility)
+
         Ok(())
     }
 }

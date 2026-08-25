@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use crate::{document::{DocumentLoader, DocumentService, engine::{self, DOCUMENT_NOT_FOUND, DocumentEngine, DocumentEngineLoader}, entity::{Document, key_from_id, key_from_seq_id}, param_result::InsertParam}, errcode::FATAL_ERROR, utils::vixerr::Error};
+use crate::{document::{DocumentLoader, DocumentService, engine::{self, DOCUMENT_NOT_FOUND, DocumentEngine, DocumentEngineLifecycle}, entity::{Document, key_from_id, key_from_seq_id}, param_result::InsertParam}, errcode::FATAL_ERROR, utils::vixerr::Error};
 
 pub struct DocumentServiceImpl {
     engine: Arc<dyn DocumentEngine>,
-    engine_loader: Arc<dyn DocumentEngineLoader>
+    engine_loader: Arc<dyn DocumentEngineLifecycle>
 }
 
 impl DocumentServiceImpl {
-    pub fn new(engine: Arc<dyn engine::DocumentEngine>, engine_loader: Arc<dyn DocumentEngineLoader>) -> (Arc<dyn DocumentService>, Arc<dyn DocumentLoader>) {
+    pub fn new(engine: Arc<dyn engine::DocumentEngine>, engine_loader: Arc<dyn DocumentEngineLifecycle>) -> (Arc<dyn DocumentService>, Arc<dyn DocumentLoader>) {
         let arc = Arc::new(DocumentServiceImpl {
             engine,
             engine_loader,
@@ -23,7 +23,7 @@ impl DocumentServiceImpl {
 
 impl DocumentLoader for DocumentServiceImpl {
     fn load(&self, collection_ids: &[String]) -> Result<(), Error> {
-        self.engine_loader.load(collection_ids)
+        self.engine_loader.load_collections(collection_ids)
     }
 }
 

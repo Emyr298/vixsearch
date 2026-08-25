@@ -7,7 +7,7 @@ use rpds::{Vector, VectorSync};
 
 use crate::{document::engine::{COMMIT_IN_PROGRESS, lsm_port_param_result::GetAllSegmentByCollectionIDPortResult, lsm_state::BufferState::Committing}, errcode::{self, FATAL_ERROR, SYSTEM_ERROR}, utils::vixerr::Error};
 
-pub struct CollectionBuffer {
+struct CollectionBuffer {
     byte_size: AtomicUsize,
     in_flight: AtomicUsize,
     map: DashMap<Vec<u8>, Vec<u8>>,
@@ -22,7 +22,7 @@ impl CollectionBuffer {
         }
     }
 
-    pub fn sorted_key_values(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
+    fn sorted_key_values(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
         let mut key_values: Vec<_> = self.map.iter()
             .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect();
@@ -73,7 +73,7 @@ impl CollectionBuffer {
         self.byte_size.load(Ordering::Relaxed)
     }
 
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
 }
@@ -91,6 +91,17 @@ pub struct CollectionState {
 }
 
 impl CollectionState {
+    pub fn new(id: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            commit_lock: Mutex::new(()),
+            buffer: ArcSwap::from_pointee(BufferState::Idle {
+                buffer: Arc::new(CollectionBuffer::new()),
+            }),
+            segments: ArcSwap::from_pointee(VectorSync::new_sync()),
+        }
+    }
+
     pub fn from_get_all_segment_by_collection_id_port_result(id: &str, result: GetAllSegmentByCollectionIDPortResult) -> Self {
         let segments: VectorSync<Arc<CollectionSegmentState>> = result.segments.iter()
             .map(|s| Arc::new(CollectionSegmentState {
@@ -179,7 +190,7 @@ impl CollectionState {
             .collect()
     }
 
-    pub fn is_flushable(&self, flush_byte_size_threshold: usize) -> bool {
+    fn is_flushable(&self, flush_byte_size_threshold: usize) -> bool {
         let cur = self.buffer.load();
         let byte_size = match &**cur {
             BufferState::Idle { buffer } => buffer.byte_size(),
@@ -189,11 +200,15 @@ impl CollectionState {
         byte_size < flush_byte_size_threshold
     }
 
-    pub fn try_begin_commit<'a>(&'a self) -> Option<CommitGuard<'a>> {
+    pub fn try_begin_commit<'a>(&'a self, flush_byte_size_threshold: usize) -> Option<CommitSession<'a>> {
         let lock_guard = match self.commit_lock.try_lock() {
             Ok(val) => val,
             Err(_) => return None,
         };
+
+        if !self.is_flushable(flush_byte_size_threshold) {
+            return None
+        }
 
         let cur_state = self.buffer.load();
         let commit_buffer = match &**cur_state {
@@ -201,15 +216,16 @@ impl CollectionState {
             BufferState::Committing { .. } => return None,
         };
 
+        let active_buffer = Arc::new(CollectionBuffer::new());
         let next_state = Arc::new(BufferState::Committing {
-            buffer: Arc::new(CollectionBuffer::new()),
+            buffer: active_buffer.clone(),
             commit_buffer: commit_buffer.clone(),
         });
 
         self.buffer.store(next_state.clone());
 
         commit_buffer.drain_in_flight();
-        Some(CommitGuard::new(self, lock_guard, commit_buffer.clone()))
+        Some(CommitSession::new(self, lock_guard, active_buffer, commit_buffer.clone()))
     }
 }
 
@@ -219,31 +235,33 @@ pub struct CollectionSegmentState {
     // TODO: inflight when implementing compaction (segment can be erased)
 }
 
-pub struct CommitGuard<'a> {
+pub struct CommitSession<'a> {
     collection: &'a CollectionState,
     _lock_guard: MutexGuard<'a, ()>,
-    pub buffer: Arc<CollectionBuffer>,
+    active_buffer: Arc<CollectionBuffer>,
+    commit_buffer: Arc<CollectionBuffer>,
 }
 
-impl<'a> CommitGuard<'a> {
-    fn new(collection: &'a CollectionState, lock_guard: MutexGuard<'a, ()>, commit_buffer: Arc<CollectionBuffer>) -> Self {
+impl<'a> CommitSession<'a> {
+    fn new(collection: &'a CollectionState, lock_guard: MutexGuard<'a, ()>, active_buffer: Arc<CollectionBuffer>, commit_buffer: Arc<CollectionBuffer>) -> Self {
         Self {
             collection: collection,
             _lock_guard: lock_guard,
-            buffer: commit_buffer,
+            active_buffer: active_buffer,
+            commit_buffer: commit_buffer,
         }
+    }
+
+    pub fn sorted_committed_key_values(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
+        self.commit_buffer.sorted_key_values()
     }
 }
 
-impl<'a> Drop for CommitGuard<'a> {
+impl<'a> Drop for CommitSession<'a> {
     fn drop(&mut self) {
-        let cur_state = self.collection.buffer.load();
-        let next_state = match &**cur_state {
-            BufferState::Idle { .. } => unreachable!("guard implies committing"),
-            BufferState::Committing { buffer, .. } => Arc::new(BufferState::Idle {
-                buffer: buffer.clone(),
-            }),
-        };
+        let next_state = Arc::new(BufferState::Idle {
+            buffer: self.active_buffer.clone(),
+        });
         self.collection.buffer.store(next_state);
     }
 }

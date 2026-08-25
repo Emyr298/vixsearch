@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use fastbloom::BloomFilter;
 
-use crate::document::engine::lsm_state::{CollectionBuffer, CollectionSegmentState, CollectionState, SegmentState};
+use crate::document::engine::lsm_state::{CollectionSegmentState, CollectionState, SegmentState};
 
 pub struct GetAllSegmentByCollectionIDPortResult {
     pub segments: Vec<GetAllSegmentByCollectionIDPortResultSegment>,

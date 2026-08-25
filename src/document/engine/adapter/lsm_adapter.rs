@@ -3,7 +3,7 @@ use std::sync::Arc;
 use fastbloom::BloomFilter;
 use uuid::Uuid;
 
-use crate::{document::engine::{LSMDocumentPort, adapter::lsm_helper::{BLOCK_HEADER_SIZE, BLOCK_MAGIC, Commit, FOOTER_MAGIC, FOOTER_SIZE, METADATA_HEADER_SIZE, METADATA_MAGIC, get_latest_commit, latest_commit_name, name, store}, lsm_entity::SegmentMetadata, lsm_port_param_result::GetAllSegmentByCollectionIDPortResult, lsm_state::CollectionBuffer}, errcode::FATAL_ERROR, storage::{Storage, StorageAccessor}, utils::vixerr::Error};
+use crate::{document::engine::{LSMDocumentPort, adapter::lsm_helper::{BLOCK_HEADER_SIZE, BLOCK_MAGIC, Commit, FOOTER_MAGIC, FOOTER_SIZE, METADATA_HEADER_SIZE, METADATA_MAGIC, get_latest_commit, latest_commit_name, name, store}, lsm_entity::SegmentMetadata, lsm_port_param_result::GetAllSegmentByCollectionIDPortResult}, errcode::FATAL_ERROR, storage::{Storage, StorageAccessor}, utils::vixerr::Error};
 
 // TODO: can try zero copy for cleaner way
 pub struct LSMDocumentAdapter {

@@ -3,7 +3,7 @@ use std::{hint::spin_loop, sync::{Arc, Mutex, atomic::Ordering}};
 use dashmap::DashMap;
 use uuid::Uuid;
 
-use crate::{document::engine::{COMMIT_IN_PROGRESS, DocumentEngineLoader, engine::{DocumentEngine, LSMDocumentPort}, errors::{COLLECTION_NOT_FOUND, DOCUMENT_NOT_FOUND}, lsm_state::{CollectionState, SegmentState}}, errcode, utils::{vixalg, vixerr::Error, vixpool::{POOL_QUEUE_FULL, Pool}}};
+use crate::{document::engine::{COMMIT_IN_PROGRESS, DocumentEngineLifecycle, engine::{DocumentEngine, LSMDocumentPort}, errors::{COLLECTION_NOT_FOUND, DOCUMENT_NOT_FOUND}, lsm_state::{CollectionState, SegmentState}}, errcode, utils::{vixalg, vixerr::Error, vixpool::{POOL_QUEUE_FULL, Pool}}};
 
 pub struct LSMDocumentEngine {
     adapter: Arc<dyn LSMDocumentPort>,
@@ -18,7 +18,7 @@ impl LSMDocumentEngine {
         adapter: Arc<dyn LSMDocumentPort>,
         flush_pool: Arc<dyn Pool>,
         flush_threshold: usize,
-    ) -> (Arc<dyn DocumentEngine>, Arc<dyn DocumentEngineLoader>) {
+    ) -> (Arc<dyn DocumentEngine>, Arc<dyn DocumentEngineLifecycle>) {
         let lsm_engine = Arc::new(LSMDocumentEngine {
             adapter,
             collection_by_id: DashMap::new(),
@@ -28,14 +28,14 @@ impl LSMDocumentEngine {
         });
 
         let engine: Arc<dyn DocumentEngine> = lsm_engine.clone();
-        let loader: Arc<dyn DocumentEngineLoader> = lsm_engine;
+        let loader: Arc<dyn DocumentEngineLifecycle> = lsm_engine;
 
         return (engine, loader);
     }
 }
 
-impl DocumentEngineLoader for LSMDocumentEngine {
-    fn load(&self, collection_ids: &[String]) -> Result<(), Error> {
+impl DocumentEngineLifecycle for LSMDocumentEngine {
+    fn load_collections(&self, collection_ids: &[String]) -> Result<(), Error> {
         for collection_id in collection_ids {
             let result = self.adapter.get_all_segment_by_collection_id(collection_id)?;
 
@@ -51,6 +51,16 @@ impl DocumentEngineLoader for LSMDocumentEngine {
         }
 
         Ok(())
+    }
+
+    fn add_collection(&self, collection_id: &str) -> Result<(), Error> {
+        let collection_state = Arc::new(CollectionState::new(collection_id));
+        self.collection_by_id.insert(collection_id.to_string(), collection_state);
+        Ok(())
+    }
+
+    fn delete_collection(&self, collection_id: &str) -> Result<(), Error> {
+        todo!()
     }
 }
 
@@ -158,25 +168,18 @@ impl LSMDocumentEngine {
     }
 
     fn should_flush(&self, collection: Arc<CollectionState>) -> Result<(), Error> {
-        if collection.is_flushable(self.flush_byte_size_threshold) {
-            return Ok(());
-        }
-
         let adapter = self.adapter.clone();
         let segment_by_id = self.segment_by_id.clone();
+        let flush_byte_size_threshold = self.flush_byte_size_threshold;
         
         self.flush_pool.submit(Box::new(move || {
-            let commit_guard = match collection.try_begin_commit() {
-                Some(cg) => cg,
+            let commit_session = match collection.try_begin_commit(flush_byte_size_threshold) {
+                Some(cs) => cs,
                 None => return,
             };
 
-            if commit_guard.buffer.is_empty() {
-                return;
-            }
-
             let segment_id = Uuid::new_v4().to_string();
-            let segment_metadata = match adapter.flush_segment(&collection.id, &segment_id, commit_guard.buffer.sorted_key_values()) {
+            let segment_metadata = match adapter.flush_segment(&collection.id, &segment_id, commit_session.sorted_committed_key_values()) {
                 Ok(metadata) => metadata,
                 Err(e) => {
                     eprintln!("failed to flush collection {}: {}", collection.id, e);
