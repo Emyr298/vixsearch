@@ -1,5 +1,6 @@
 // use std::sync::Arc;
 
+use actix_web::{App, HttpServer, web};
 // use actix_web::{App, HttpServer, web};
 use dotenvy::dotenv;
 
@@ -9,11 +10,11 @@ mod di;
 mod errcode;
 // mod shared;
 mod storage;
-// mod transport;
+mod transport;
+mod translog;
 mod utils;
-// mod index;
 mod document;
-// mod query;
+mod query;
 
 use utils::vixerr;
 
@@ -37,12 +38,12 @@ fn load(app: &Application) -> Result<(), Error> {
     app.collection_loader.load()
 }
 
-// fn start_actix(config: config::Config, orchestrator: Arc<dyn orchestrator::Orchestrator>) {
+// fn start_actix(config: config::Config) {
 //     let orchestrator_data = web::Data::from(orchestrator);
 //     actix_web::rt::System::new().block_on(async move {
 //         HttpServer::new(move || {
 //             App::new()
-//                 .app_data(utils::http::error_handler(
+//                 .app_data(utils::http::json_error_handler(
 //                     errcode::PARSE_ERROR,
 //                     "failed to parse request",
 //                 ))

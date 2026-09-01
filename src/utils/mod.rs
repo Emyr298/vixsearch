@@ -3,5 +3,7 @@ pub mod vixalg;
 pub mod vixerr;
 pub mod vixscheduler;
 pub mod vixpool;
+pub mod vixserial;
 pub mod observer;
+pub mod counter;
 pub mod loader;

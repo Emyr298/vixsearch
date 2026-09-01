@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{collection::{self, CollectionAdapter, CollectionLoader}, config::Config, document::{self, LSMDocumentAdapter, LSMDocumentEngine}, storage::{FileStorage, WormFileStorage}, utils::{observer::observer_group::ObserverGroup, vixpool::StandardPool}};
+use crate::{collection::{self, CollectionAdapter, CollectionLoader}, config::Config, document::{self, LSMDocumentAdapter, LSMDocumentEngine}, storage::{LegacyFileStorage, FileStorage}, utils::{observer::observer_group::ObserverGroup, vixpool::StandardPool}};
 
 pub struct Application {
     pub collection_loader: Arc<dyn CollectionLoader>,
@@ -22,8 +22,8 @@ impl Application {
 pub fn register_dependencies() -> Application {
     // Infrastructure
     let config = Config::new();
-    let storage = FileStorage::new(&config.base_dir);
-    let worm_storage = WormFileStorage::new(&config.base_dir, &config.base_temp_dir);
+    let storage = LegacyFileStorage::new(&config.base_dir);
+    let worm_storage = FileStorage::new(&config.base_dir, &config.base_temp_dir);
     let flush_pool = StandardPool::new(
         config.document_flush_thread_size,
         Some(config.document_flush_queue_size),

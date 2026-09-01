@@ -1,20 +1,18 @@
 use std::{fs::File, os::unix::fs::FileExt, sync::Arc};
 
-use crate::{errcode::FATAL_ERROR, storage::StorageAccessor, utils::vixerr::Error};
+use crate::{errcode::FATAL_ERROR, storage::StorageReader, utils::vixerr::Error};
 
-pub struct FileStorageAccessor {
+pub struct FileStorageReader {
     file: Arc<File>,
 }
 
-impl FileStorageAccessor {
-    pub fn new(file: Arc<File>) -> Box<dyn StorageAccessor> {
+impl FileStorageReader {
+    pub fn new(file: Arc<File>) -> Box<dyn StorageReader> {
         Box::new(Self {
             file,
         })
     }
-}
 
-impl StorageAccessor for FileStorageAccessor {
     fn size(&self) -> Result<u64, Error> {
         let file_metadata = match self.file.metadata() {
             Ok(val) => val,
@@ -26,7 +24,9 @@ impl StorageAccessor for FileStorageAccessor {
         
         Ok(file_metadata.len())
     }
+}
 
+impl StorageReader for FileStorageReader {
     fn read(&self, offset: u64, size: u64) -> Result<Vec<u8>, Error> {
         let mut buf = vec![0u8; size as usize];
         if let Err(e) = self.file.read_exact_at(&mut buf, offset) {
@@ -38,26 +38,9 @@ impl StorageAccessor for FileStorageAccessor {
 
         Ok(buf)
     }
-
-    fn write(&self, offset: u64, data: &[u8]) -> Result<(), Error> {
-        if let Err(e) = self.file.write_at(data, offset) {
-            return Error::code(FATAL_ERROR)
-                .message("failed to write to file")
-                .wrap(e)
-                .throw();
-        };
-
-        Ok(())
-    }
-
-    fn flush(&self) -> Result<(), Error> {
-        if let Err(e) = self.file.sync_all() {
-            return Error::code(FATAL_ERROR)
-                .message(format!("failed to flush file"))
-                .wrap(e)
-                .throw();
-        };
-
-        Ok(())
+    
+    fn read_all(&self) -> Result<Vec<u8>, Error> {
+        let byte_size = self.size()?;
+        self.read(0, byte_size)
     }
 }

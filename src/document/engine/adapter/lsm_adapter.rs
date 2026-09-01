@@ -3,18 +3,18 @@ use std::sync::Arc;
 use fastbloom::BloomFilter;
 use uuid::Uuid;
 
-use crate::{document::engine::{LSMDocumentPort, adapter::lsm_helper::{BLOCK_HEADER_SIZE, BLOCK_MAGIC, Commit, FOOTER_MAGIC, FOOTER_SIZE, METADATA_HEADER_SIZE, METADATA_MAGIC, get_latest_commit, latest_commit_name, name, store}, lsm_entity::SegmentMetadata, lsm_port_param_result::GetAllSegmentByCollectionIDPortResult}, errcode::FATAL_ERROR, storage::{Storage, StorageAccessor}, utils::vixerr::Error};
+use crate::{document::engine::{LSMDocumentPort, adapter::lsm_helper::{BLOCK_HEADER_SIZE, BLOCK_MAGIC, Commit, FOOTER_MAGIC, FOOTER_SIZE, METADATA_HEADER_SIZE, METADATA_MAGIC, get_latest_commit, latest_commit_name, name, store}, lsm_entity::SegmentMetadata, lsm_port_param_result::GetAllSegmentByCollectionIDPortResult}, errcode::FATAL_ERROR, storage::{LegacyStorage, LegacyStorageAccessor}, utils::vixerr::Error};
 
 // TODO: can try zero copy for cleaner way
 pub struct LSMDocumentAdapter {
-    storage: Arc<dyn Storage>,
+    storage: Arc<dyn LegacyStorage>,
     min_document_content_size: usize,
     false_positive_probability: f64,
 }
 
 impl LSMDocumentAdapter {
     pub fn new(
-        storage: Arc<dyn Storage>,
+        storage: Arc<dyn LegacyStorage>,
         min_document_content_size: usize,
         false_positive_probability: f64,
     ) -> Arc<dyn LSMDocumentPort> {
@@ -205,7 +205,7 @@ impl LSMDocumentPort for LSMDocumentAdapter {
 }
 
 impl LSMDocumentAdapter {
-    fn write_documents(&self, accessor: &Box<dyn StorageAccessor>, kv_pairs: &Vec<(Vec<u8>, Vec<u8>)>) -> Result<(u64, Vec<u64>), Error> {
+    fn write_documents(&self, accessor: &Box<dyn LegacyStorageAccessor>, kv_pairs: &Vec<(Vec<u8>, Vec<u8>)>) -> Result<(u64, Vec<u64>), Error> {
         let mut block_offsets: Vec<u64> = Vec::new();
         let mut block_content: Vec<u8> = Vec::new();
         let mut next_offset: u64 = 0;
@@ -232,7 +232,7 @@ impl LSMDocumentAdapter {
     }
 
     // <BLCK 4 byte><CRC CONTENT LEN 4 byte><CONTENT LEN 8 byte><CRC CONTENT 4 byte><CONTENT>
-    fn write_document_block(&self, accessor: &Box<dyn StorageAccessor>, offset: u64, content_bytes: &[u8]) -> Result<u64, Error> {
+    fn write_document_block(&self, accessor: &Box<dyn LegacyStorageAccessor>, offset: u64, content_bytes: &[u8]) -> Result<u64, Error> {
         let content_len = (content_bytes.len() as u64).to_le_bytes();
 
         let content_checksum = crc32fast::hash(&content_bytes);
@@ -254,7 +254,7 @@ impl LSMDocumentAdapter {
     // <META 4 byte><CRC 4 byte><METADATA LEN 8 byte><OFFSETS LEN 8 byte><OFFSETS>
     // <BLOOMFILTER HASH CNT 4 byte><BLOOMFILTER BITS LEN 8 byte><BF BITS>
     // <SMALLEST KEY LEN><SMALLEST KEY><BIGGEST KEY LEN><BIGGEST KEY>
-    fn write_metadata(&self, writer: &Box<dyn StorageAccessor>, offset: u64, kv_pairs: &Vec<(Vec<u8>, Vec<u8>)>, block_offsets: Vec<u64>) -> Result<(u64, SegmentMetadata), Error> {
+    fn write_metadata(&self, writer: &Box<dyn LegacyStorageAccessor>, offset: u64, kv_pairs: &Vec<(Vec<u8>, Vec<u8>)>, block_offsets: Vec<u64>) -> Result<(u64, SegmentMetadata), Error> {
         let offsets_bytes = rmp_serde::to_vec(&block_offsets).unwrap();
         let offsets_len = (offsets_bytes.len() as u64).to_le_bytes();
 
@@ -330,7 +330,7 @@ impl LSMDocumentAdapter {
     }
 
     // <FOOT 4 byte><CRC 4 byte><METADATA OFFSET 8 byte>
-    fn write_footer(&self, accessor: &Box<dyn StorageAccessor>, offset: u64, metadata_offset: u64) -> Result<(), Error> {
+    fn write_footer(&self, accessor: &Box<dyn LegacyStorageAccessor>, offset: u64, metadata_offset: u64) -> Result<(), Error> {
         let metadata_offset_bytes = metadata_offset.to_le_bytes();
         let checksum = crc32fast::hash(&metadata_offset_bytes);
         
@@ -346,7 +346,7 @@ impl LSMDocumentAdapter {
 }
 
 impl LSMDocumentAdapter {
-    fn get_metadata_offset(&self, accessor: &Box<dyn StorageAccessor>) -> Result<u64, Error> {
+    fn get_metadata_offset(&self, accessor: &Box<dyn LegacyStorageAccessor>) -> Result<u64, Error> {
         let size = accessor.size()?;
 
         let Some(footer_offset) = size.checked_sub(FOOTER_SIZE as u64) else {

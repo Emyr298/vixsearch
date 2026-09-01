@@ -1,9 +1,9 @@
-use std::sync::{Arc, RwLock};
+use std::{collections::HashMap, sync::{Arc, RwLock}};
 
 use dashmap::{DashMap, Entry};
 use uuid::Uuid;
 
-use crate::{collection::{service::{CollectionLoader, CollectionPort, CollectionService}, service_param_result::CreateParam, state::{CollectionState, CollectionStatus, collection_ids}}, document::{Document, DocumentCollectionLifecycle}, errcode::{EXISTS, NOT_FOUND, NOT_READY}, utils::vixerr::Error};
+use crate::{collection::{service::{CollectionLoader, CollectionPort, CollectionService}, service_param_result::CreateParam, state::{CollectionState, CollectionStatus, collection_ids}}, document::{Document, DocumentCollectionLifecycle, RawValue, Value}, errcode::{EXISTS, NOT_FOUND, NOT_READY}, utils::vixerr::Error};
 
 pub struct ServiceImpl {
     adapter: Arc<dyn CollectionPort>,
@@ -124,7 +124,7 @@ impl CollectionService for ServiceImpl {
         Ok(())
     }
 
-    fn validate_by_id(&self, id: &str, document: &Document) -> Result<(), Error> {
+    fn parse_raw_document_payload_by_id(&self, id: &str, raw_document_payload: &HashMap<String, RawValue>) -> Result<HashMap<String, Value>, Error> {
         let collection_arc = match self.collection_by_id.get(id) {
             Some(c) => c.clone(),
             None => return Error::code(NOT_FOUND)
@@ -139,6 +139,6 @@ impl CollectionService for ServiceImpl {
                 .throw();
         }
 
-        collection.validate_document(document)
+        collection.parse_raw_document_payload(raw_document_payload)
     }
 }

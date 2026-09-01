@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{document::engine::lsm_port_param_result::{GetAllSegmentByCollectionIDPortResult, GetAllSegmentByCollectionIDPortResultSegment}, errcode::FATAL_ERROR, storage::StorageAccessor, utils::vixerr::Error};
+use crate::{document::engine::lsm_port_param_result::{GetAllSegmentByCollectionIDPortResult, GetAllSegmentByCollectionIDPortResultSegment}, errcode::FATAL_ERROR, storage::LegacyStorageAccessor, utils::vixerr::Error};
 
 pub const BLOCK_HEADER_SIZE: usize = 20;
 pub const METADATA_HEADER_SIZE: usize = 16;
@@ -60,7 +60,7 @@ impl CommitSegment {
     }
 }
 
-pub fn get_latest_commit(accessor: Box<dyn StorageAccessor>) -> Result<Commit, Error> {
+pub fn get_latest_commit(accessor: Box<dyn LegacyStorageAccessor>) -> Result<Commit, Error> {
     let commit_size = accessor.size()?;
     let commit_buf = accessor.read(0, commit_size)?;
     let commit_content_buf: Vec<u8> = commit_buf[4..].to_vec();

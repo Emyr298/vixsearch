@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::{Arc, RwLock}};
 
-use crate::{collection::{port_param_result::GetAllPortResultCollection, service_param_result::CreateParamField}, document::{Document, ValueType}, errcode::PARSE_ERROR, utils::vixerr::Error};
+use crate::{collection::{port_param_result::GetAllPortResultCollection, service_param_result::CreateParamField}, document::{Document, RawValue, Value, ValueType}, errcode::PARSE_ERROR, utils::vixerr::Error};
 
 #[derive(Debug, PartialEq)]
 pub enum CollectionStatus {
@@ -40,30 +40,28 @@ impl CollectionState {
     }
 
     // TODO: optional constraint, etc in next phases
-    pub fn validate_document(&self, document: &Document) -> Result<(), Error> {
-        for (key, value) in &document.payload {
-            if !self.field_types.contains_key(key) {
-                return Error::code(PARSE_ERROR)
-                    .message(format!("unknown field: {}", key))
-                    .throw();
-            }
+    pub fn parse_raw_document_payload(&self, raw_document_payload: &HashMap<String, RawValue>) -> Result<HashMap<String, Value>, Error> {
+        let mut document_payload = HashMap::<String, Value>::new();
 
-            let payload_type = value.value_type();
-            let collection_type = &self.field_types[key];
-            if &payload_type != collection_type {
-                return Error::code(PARSE_ERROR)
-                    .message(format!("field {} is not {}: {}", key, payload_type.string(), collection_type.string()))
-                    .throw();
-            }
+        for (key, raw_value) in raw_document_payload {
+            let field_type = match self.field_types.get(key) {
+                Some(ft) => ft,
+                None => return Error::code(PARSE_ERROR)
+                    .message(format!("unknown field: {}", key))
+                    .throw(),
+            };
+
+            let value = field_type.value(&raw_value)?;
+            document_payload.insert(key.clone(), value);
         }
 
-        if document.payload.len() < self.field_types.len() {
+        if document_payload.len() < self.field_types.len() {
             return Error::code(PARSE_ERROR)
                 .message("missing fields")
                 .throw();
         }
 
-        Ok(())
+        Ok(document_payload)
     }
 }
 

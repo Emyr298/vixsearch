@@ -4,16 +4,16 @@ use crate::collection::adapter::helper::{COMMIT_STORE, Commit, CommitBlock, GetL
 use crate::collection::port_param_result::{CreatePortParam, GetAllPortResult, GetAllPortResultCollection};
 use crate::collection::service::CollectionPort;
 use crate::errcode::PARSE_ERROR;
-use crate::storage::WormStorage;
+use crate::storage::Storage;
 use crate::utils::vixerr::Error;
 
 pub struct CollectionAdapter {
-    storage: Arc<dyn WormStorage>,
+    storage: Arc<dyn Storage>,
     commit_lock: RwLock<()>,
 }
 
 impl CollectionAdapter {
-    pub fn new(storage: Arc<dyn WormStorage>) -> Arc<dyn CollectionPort> {
+    pub fn new(storage: Arc<dyn Storage>) -> Arc<dyn CollectionPort> {
         Arc::new(CollectionAdapter {
             storage: storage,
             commit_lock: RwLock::new(()),
@@ -22,7 +22,7 @@ impl CollectionAdapter {
 
     // TODO: invalid commits should be cleaned at load
     fn get_latest_commit(&self) -> Result<GetLatestCommitResult, Error> {
-        let names = self.storage.get_all_commited_name_sorted(COMMIT_STORE)?;
+        let names = self.storage.get_all_name_sorted(COMMIT_STORE)?;
         let next_commit_number = next_commit_number(&names);
 
         for commit_name in names.into_iter().filter(|n| n.starts_with("commit_")).rev() {
@@ -75,7 +75,7 @@ impl CollectionPort for CollectionAdapter {
         let (store, name) = schema_store_name(&internal_id);
         let schema_buf = SchemaBlock::from_create_port_param(param).encode();
 
-        let mut schema_writer = self.storage.get_writer(&store, &name)?;
+        let mut schema_writer = self.storage.get_write_once_writer(&store, &name)?;
         schema_writer.write(&schema_buf)?;
         schema_writer.commit()?;
 
@@ -84,7 +84,7 @@ impl CollectionPort for CollectionAdapter {
         let result = self.get_latest_commit()?;
         let commit = Commit::add_collection(&internal_id, result);
 
-        let mut commit_writer = self.storage.get_writer(COMMIT_STORE, &commit.name())?;
+        let mut commit_writer = self.storage.get_write_once_writer(COMMIT_STORE, &commit.name())?;
         let commit_buf = CommitBlock::from_commit(commit).encode();
 
         commit_writer.write(&commit_buf)?;
@@ -96,7 +96,7 @@ impl CollectionPort for CollectionAdapter {
 
         let result = self.get_latest_commit()?;
         if let Some(commit) = Commit::delete_collection(internal_id, result) {
-            let mut commit_writer = self.storage.get_writer(COMMIT_STORE, &commit.name())?;
+            let mut commit_writer = self.storage.get_write_once_writer(COMMIT_STORE, &commit.name())?;
             let commit_buf = CommitBlock::from_commit(commit).encode();
 
             commit_writer.write(&commit_buf)?;

@@ -4,8 +4,6 @@ use serde::Serialize;
 pub struct ApiResponse<T: Serialize> {
     pub code: String,
     pub data: T,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub errors: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -14,21 +12,23 @@ pub struct ApiResponseError {
     pub errors: Vec<String>,
 }
 
-pub fn response_success<T: Serialize>(code: String, data: T) -> ApiResponse<T> {
+pub fn response_success<T: Serialize>(code: &str, data: T) -> ApiResponse<T> {
     ApiResponse {
-        code: code,
+        code: code.to_string(),
         data,
-        errors: Vec::new(),
     }
 }
 
-pub fn response_error(code: String, error: String) -> ApiResponseError {
+pub fn response_error(code: &str, error: &str) -> ApiResponseError {
     ApiResponseError {
-        code,
-        errors: vec![error],
+        code: code.to_string(),
+        errors: vec![error.to_string()],
     }
 }
 
-pub fn response_errors(code: String, errors: Vec<String>) -> ApiResponseError {
-    ApiResponseError { code, errors }
+pub fn response_errors(code: &str, errors: &[String]) -> ApiResponseError {
+    ApiResponseError {
+        code: code.to_string(),
+        errors: errors.to_vec(),
+    }
 }

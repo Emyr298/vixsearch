@@ -52,14 +52,15 @@ impl DocumentService for DocumentServiceImpl {
         Ok(doc)
     }
 
-    fn insert(&self, collection_id: &str, param: InsertParam) -> Result<(), Error> {
+    fn insert(&self, collection_id: &str, param: InsertParam) -> Result<Document, Error> {
         let existing_seq_id = match self.get_seq_id_by_id(collection_id, &param.id) {
             Ok(val) => Some(val),
             Err(err) if err.code == DOCUMENT_NOT_FOUND => None,
             Err(err) => return Err(err),
         };
 
-        let doc = match rmp_serde::to_vec(&param.payload) {
+        let doc = param.document();
+        let doc_bytes = match rmp_serde::to_vec(&doc) {
             Ok(val) => val,
             Err(err) => return Error::code(FATAL_ERROR)
                 .message("failed to serialize payload")
@@ -72,20 +73,20 @@ impl DocumentService for DocumentServiceImpl {
             None => {
                 self.engine.insert(
                     collection_id,
-                    &key_from_id(&param.id),
-                    &param.op_seq.to_le_bytes()
+                    &key_from_id(&doc.id),
+                    &doc.seq_id.to_le_bytes()
                 )?;
-                param.op_seq
+                doc.seq_id
             }
         };
 
         self.engine.insert(
             collection_id,
             &key_from_seq_id(&seq_id),
-            &doc
+            &doc_bytes
         )?;
 
-        Ok(())
+        Ok(doc)
     }
 }
 
