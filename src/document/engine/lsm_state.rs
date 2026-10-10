@@ -1,13 +1,14 @@
-use std::{hint::spin_loop, sync::{Arc, Mutex, MutexGuard, atomic::{AtomicUsize, Ordering}}};
+use std::{hint::spin_loop, sync::{Arc, Mutex, MutexGuard, atomic::{AtomicU64, AtomicUsize, Ordering}}};
 
 use arc_swap::{ArcSwap, ArcSwapOption};
 use dashmap::{DashMap, iter::Iter, mapref::multiple::RefMulti};
 use fastbloom::BloomFilter;
 use rpds::{Vector, VectorSync};
 
-use crate::{document::engine::{COMMIT_IN_PROGRESS, lsm_entity::CollectionStateDropEvent, lsm_port_param_result::GetAllSegmentByCollectionIDPortResult, lsm_state::BufferState::Committing}, errcode::{self, FATAL_ERROR, SYSTEM_ERROR}, utils::{observer::observer::{Observer, ObserverGroupReader}, vixerr::Error}};
+use crate::{document::engine::{COMMIT_IN_PROGRESS, OpSeqCommitEngineEvent, lsm_entity::{CollectionStateDropEvent, SegmentStateDropEvent}, lsm_port_param_result::GetAllSegmentByCollectionIDPortResult, lsm_state::BufferState::Committing}, errcode::{self, FATAL_ERROR, SYSTEM_ERROR}, utils::{observer::observer::{Observer, ObserverGroupReader}, vixerr::Error}};
 
 struct CollectionBuffer {
+    last_op_seq: AtomicU64,
     byte_size: AtomicUsize,
     in_flight: AtomicUsize,
     map: DashMap<Vec<u8>, Vec<u8>>,
@@ -16,6 +17,7 @@ struct CollectionBuffer {
 impl CollectionBuffer {
     fn new() -> Self {
         CollectionBuffer {
+            last_op_seq: AtomicU64::new(0),
             byte_size: AtomicUsize::new(0),
             in_flight: AtomicUsize::new(0),
             map: DashMap::new(),
@@ -38,7 +40,7 @@ impl CollectionBuffer {
         }
     }
 
-    fn insert(&self, key: Vec<u8>, value: Vec<u8>) {
+    fn insert(&self, key: Vec<u8>, value: Vec<u8>, op_seq: u64) {
         let key_size = key.len();
         let cur_value_size = value.len();
 
@@ -47,6 +49,8 @@ impl CollectionBuffer {
             Some(old_value) => key_size + old_value.len(),
             None => 0,
         };
+
+        self.last_op_seq.fetch_max(op_seq, Ordering::Relaxed);
 
         if cur_approx_size > old_approx_size {
             self.byte_size.fetch_add(cur_approx_size - old_approx_size, Ordering::Relaxed);
@@ -157,7 +161,7 @@ impl CollectionState {
         }
     }
 
-    pub fn insert_buffer_value(&self, key: &[u8], value: &[u8]) {
+    pub fn insert_buffer_value(&self, key: &[u8], value: &[u8], op_seq: u64) {
         let buffer = loop {
             let candidate_state = self.buffer.load();
             let candidate_buffer = match &**candidate_state {
@@ -181,7 +185,7 @@ impl CollectionState {
             candidate_buffer.sub_in_flight();
         };
 
-        buffer.insert(key.to_vec(), value.to_vec());
+        buffer.insert(key.to_vec(), value.to_vec(), op_seq);
         buffer.sub_in_flight();
     }
 
@@ -249,11 +253,13 @@ pub struct CollectionSegmentState {
     pub level: u32,
 }
 
+// TODO: should make abstraction for this
 pub struct CommitSession<'a> {
     collection: &'a CollectionState,
     _lock_guard: MutexGuard<'a, ()>,
     active_buffer: Arc<CollectionBuffer>,
     commit_buffer: Arc<CollectionBuffer>,
+    committed: bool,
 }
 
 impl<'a> CommitSession<'a> {
@@ -263,20 +269,39 @@ impl<'a> CommitSession<'a> {
             _lock_guard: lock_guard,
             active_buffer: active_buffer,
             commit_buffer: commit_buffer,
+            committed: false,
+        }
+    }
+
+    pub fn op_seq_commit_engine_event(&self) -> OpSeqCommitEngineEvent {
+        OpSeqCommitEngineEvent {
+            collection_id: self.collection.id.clone(),
+            op_seq: self.commit_buffer.last_op_seq.load(Ordering::Relaxed),
         }
     }
 
     pub fn sorted_committed_key_values(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
         self.commit_buffer.sorted_key_values()
     }
-}
 
-impl<'a> Drop for CommitSession<'a> {
-    fn drop(&mut self) {
+    pub fn finalize(mut self) {
+        self.finalize_internal();
+    }
+
+    fn finalize_internal(&mut self) {
         let next_state = Arc::new(BufferState::Idle {
             buffer: self.active_buffer.clone(),
         });
         self.collection.buffer.store(next_state);
+        self.committed = true;
+    }
+}
+
+impl<'a> Drop for CommitSession<'a> {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.finalize_internal();
+        }
     }
 }
 
@@ -288,6 +313,8 @@ pub struct SegmentState {
     pub biggest_key: Vec<u8>,
     pub key_filter: BloomFilter,
     pub key_block_offsets: Vec<u64>,
+
+    pub drop_observers: Arc<dyn ObserverGroupReader<SegmentStateDropEvent>>,
 }
 
 impl SegmentState {
@@ -297,5 +324,18 @@ impl SegmentState {
         }
 
         self.key_filter.contains(&key)
+    }
+}
+
+impl Drop for SegmentState {
+    fn drop(&mut self) {
+        let event = SegmentStateDropEvent {
+            id: self.id.to_string(),
+            collection_id: self.collection_id.to_string(),
+        };
+
+        for observer in self.drop_observers.list().iter() {
+            observer.observe(&event);
+        }
     }
 }

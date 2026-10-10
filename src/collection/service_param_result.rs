@@ -1,4 +1,4 @@
-use crate::{collection::port_param_result::{CreatePortParam, CreatePortParamField}, document::ValueType, errcode::PARSE_ERROR, utils::vixerr::Error};
+use crate::{collection::port_param_result::{CreatePortParam, CreatePortParamField}, common::ValueType, errcode::PARSE_ERROR, utils::vixerr::Error};
 
 pub struct CreateParam {
     pub id: String,

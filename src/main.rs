@@ -4,6 +4,7 @@ use actix_web::{App, HttpServer, web};
 // use actix_web::{App, HttpServer, web};
 use dotenvy::dotenv;
 
+mod common;
 mod collection;
 mod config;
 mod di;

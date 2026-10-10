@@ -4,13 +4,7 @@ use crate::{document::engine::{lsm_entity::SegmentMetadata, lsm_port_param_resul
 
 pub trait DocumentEngine: Send + Sync {
     fn get_by_key(&self, collection_id: &str, key: &[u8]) -> Result<Vec<u8>, Error>;
-    fn insert(&self, collection_id: &str, key: &[u8], value: &[u8]) -> Result<(), Error>;
-}
-
-pub trait DocumentEngineCollectionLifecycle: Send + Sync {
-    fn load_collections(&self, collection_ids: &[String]) -> Result<(), Error>;
-    fn add_collection(&self, collection_id: &str) -> Result<(), Error>;
-    fn delete_collection(&self, collection_id: &str) -> Result<(), Error>;
+    fn insert(&self, collection_id: &str, key: &[u8], value: &[u8], op_seq: u64) -> Result<(), Error>;
 }
 
 pub trait LSMDocumentPort: Send + Sync {

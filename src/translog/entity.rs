@@ -1,12 +1,22 @@
 use std::collections::HashMap;
 
-use crate::document::Value;
+use crate::common::Value;
 
-pub enum Transaction {
-    Insert(InsertData),
+pub struct Transaction {
+    pub collection_id: String,
+    pub op_seq: u64,
+    pub detail: TransactionDetail,
 }
 
-pub struct InsertData {
+pub enum TransactionDetail {
+    Insert(InsertDetail),
+}
+
+pub struct InsertDetail {
     pub document_id: String,
     pub payload: HashMap<String, Value>
+}
+
+pub struct OpSeqStateDropEvent {
+    pub collection_id: String,
 }

@@ -1,37 +1,21 @@
 use std::sync::Arc;
 
-use crate::{document::{DocumentCollectionLifecycle, DocumentService, engine::{self, DOCUMENT_NOT_FOUND, DocumentEngine, DocumentEngineCollectionLifecycle}, entity::{Document, key_from_id, key_from_seq_id}, param_result::InsertParam}, errcode::FATAL_ERROR, utils::vixerr::Error};
+use crate::{collection::CollectionLifecycleEvent, common::Document, document::{DocumentService, OpSeqCommitEvent, engine::{self, DOCUMENT_NOT_FOUND, DocumentEngine, OpSeqCommitEngineEvent}, entity::{key_from_id, key_from_seq_id}, param_result::InsertParam}, errcode::FATAL_ERROR, utils::{handler::handler::Handler, observer::observer::{Observer, ObserverGroupReader}, vixerr::Error}};
 
 pub struct DocumentServiceImpl {
     engine: Arc<dyn DocumentEngine>,
-    engine_collection_lifecycle: Arc<dyn DocumentEngineCollectionLifecycle>
+    op_seq_commit_observers: Arc<dyn ObserverGroupReader<OpSeqCommitEvent>>,
 }
 
 impl DocumentServiceImpl {
-    pub fn new(engine: Arc<dyn engine::DocumentEngine>, engine_loader: Arc<dyn DocumentEngineCollectionLifecycle>) -> (Arc<dyn DocumentService>, Arc<dyn DocumentCollectionLifecycle>) {
-        let arc = Arc::new(DocumentServiceImpl {
+    pub fn new(
+        engine: Arc<dyn engine::DocumentEngine>,
+        op_seq_commit_observers: Arc<dyn ObserverGroupReader<OpSeqCommitEvent>>,
+    ) -> Arc<dyn DocumentService> {
+        Arc::new(DocumentServiceImpl {
             engine,
-            engine_collection_lifecycle: engine_loader,
-        });
-
-        let service_arc: Arc<dyn DocumentService> = arc.clone();
-        let lifecycle_arc: Arc<dyn DocumentCollectionLifecycle> = arc;
-
-        (service_arc, lifecycle_arc)
-    }
-}
-
-impl DocumentCollectionLifecycle for DocumentServiceImpl {
-    fn load_collections(&self, collection_ids: &[String]) -> Result<(), Error> {
-        self.engine_collection_lifecycle.load_collections(collection_ids)
-    }
-    
-    fn add_collection(&self, collection_id: &str) -> Result<(), Error> {
-        self.engine_collection_lifecycle.add_collection(collection_id)
-    }
-    
-    fn delete_collection(&self, collection_id: &str) -> Result<(), Error> {
-        self.engine_collection_lifecycle.delete_collection(collection_id)
+            op_seq_commit_observers,
+        })
     }
 }
 
@@ -53,13 +37,14 @@ impl DocumentService for DocumentServiceImpl {
     }
 
     fn insert(&self, collection_id: &str, param: InsertParam) -> Result<Document, Error> {
-        let existing_seq_id = match self.get_seq_id_by_id(collection_id, &param.id) {
+        let existing_seq_id = match self.get_seq_id_by_id(collection_id, &param.doc_id) {
             Ok(val) => Some(val),
             Err(err) if err.code == DOCUMENT_NOT_FOUND => None,
             Err(err) => return Err(err),
         };
 
-        let doc = param.document();
+        let op_seq = param.op_seq;
+        let doc = param.document(existing_seq_id);
         let doc_bytes = match rmp_serde::to_vec(&doc) {
             Ok(val) => val,
             Err(err) => return Error::code(FATAL_ERROR)
@@ -68,22 +53,20 @@ impl DocumentService for DocumentServiceImpl {
                 .throw(),
         };
 
-        let seq_id = match existing_seq_id {
-            Some(id) => id,
-            None => {
-                self.engine.insert(
-                    collection_id,
-                    &key_from_id(&doc.id),
-                    &doc.seq_id.to_le_bytes()
-                )?;
-                doc.seq_id
-            }
-        };
+        if existing_seq_id.is_none() {
+            self.engine.insert(
+                collection_id,
+                &key_from_id(&doc.id),
+                &doc.seq_id.to_le_bytes(),
+                op_seq,
+            )?;
+        }
 
         self.engine.insert(
             collection_id,
-            &key_from_seq_id(&seq_id),
-            &doc_bytes
+            &key_from_seq_id(&doc.seq_id),
+            &doc_bytes,
+            op_seq,
         )?;
 
         Ok(doc)
@@ -103,5 +86,14 @@ impl DocumentServiceImpl {
 
         let seq_id = u64::from_le_bytes(seq_id_raw[..8].try_into().unwrap());
         Ok(seq_id)
+    }
+}
+
+impl Observer<OpSeqCommitEngineEvent> for DocumentServiceImpl {
+    fn observe(&self, engine_event: &OpSeqCommitEngineEvent) {
+        let event = OpSeqCommitEvent::new(engine_event);
+        for observer in self.op_seq_commit_observers.list().iter() {
+            observer.observe(&event);
+        }
     }
 }

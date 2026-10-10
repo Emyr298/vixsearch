@@ -1,7 +1,7 @@
 use deku::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{collection::port_param_result::{CreatePortParam, CreatePortParamField, GetAllPortResultCollection, GetAllPortResultCollectionField}, document::ValueType, errcode::PARSE_ERROR, utils::vixerr::Error};
+use crate::{collection::port_param_result::{CreatePortParam, CreatePortParamField, GetAllPortResultCollection, GetAllPortResultCollectionField}, common::ValueType, errcode::PARSE_ERROR, utils::vixerr::Error};
 
 pub const COMMIT_MAGIC: &[u8; 4] = b"CMMT";
 pub const SCHEMA_MAGIC: &[u8; 4] = b"SCMA";

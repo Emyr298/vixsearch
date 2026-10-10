@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::collection::port_param_result::{CreatePortParam, GetAllPortResult};
 use crate::collection::service_param_result::CreateParam;
-use crate::document::{Document, RawValue, Value};
+use crate::common::{RawValue, Value};
 use crate::vixerr::Error;
 
 pub trait CollectionService: Send + Sync {

@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use fastbloom::BloomFilter;
 
-use crate::document::engine::lsm_state::SegmentState;
+use crate::{document::engine::lsm_state::SegmentState, utils::observer::observer::ObserverGroupReader};
 
 pub struct SegmentMetadata {
     pub key_block_offsets: Vec<u64>,
@@ -11,7 +13,7 @@ pub struct SegmentMetadata {
 }
 
 impl SegmentMetadata {
-    pub fn segment_state(self, segment_id: &str, collection_id: &str) -> SegmentState {
+    pub fn segment_state(self, segment_id: &str, collection_id: &str, drop_observers: Arc<dyn ObserverGroupReader<SegmentStateDropEvent>>) -> SegmentState {
         let key_filter = BloomFilter::from_vec(self.filter_bits).hashes(self.filter_hash_cnt);
         SegmentState {
             id: segment_id.to_string(),
@@ -20,6 +22,7 @@ impl SegmentMetadata {
             biggest_key: self.biggest_key,
             key_filter: key_filter,
             key_block_offsets: self.key_block_offsets,
+            drop_observers,
         }
     }
 }

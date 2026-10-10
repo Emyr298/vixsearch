@@ -35,6 +35,8 @@ impl QueryService for QueryServiceImpl {
         self.document_service.get_by_id(collection_id, id)
     }
 
+    // TODO: need to rerun uncommitted translog queries
+
     fn insert(&self, param: InsertParam) -> Result<Document, Error> {
         let parsed_payload = self.collection_service.parse_raw_document_payload_by_id(&param.collection_id, &param.payload)?;
         let parsed_param = ParsedInsertParam {

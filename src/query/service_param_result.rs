@@ -17,7 +17,7 @@ pub struct ParsedInsertParam {
 impl ParsedInsertParam {
     pub fn document_insert_param(self, op_seq: u64) -> document::InsertParam {
         document::InsertParam {
-            id: self.document_id,
+            doc_id: self.document_id,
             op_seq,
             payload: self.payload,
         }

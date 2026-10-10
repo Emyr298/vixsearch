@@ -61,7 +61,7 @@ impl Storage for FileStorage {
         Ok(names)
     }
 
-    fn get_append_only_writer(&self, store: &str, name: &str, last_offset: u64) -> Result<Box<dyn super::AppendOnlyStorageWriter>, Error> {
+    fn create_append_only_writer(&self, store: &str, name: &str, last_offset: u64) -> Result<Box<dyn super::AppendOnlyStorageWriter>, Error> {
         let path = Path::new(&self.base_dir)
             .join(store)
             .join(name);
@@ -115,7 +115,7 @@ impl Storage for FileStorage {
         Ok(AppendOnlyFileStorageWriter::new(file, last_offset))
     }
     
-    fn get_write_once_writer(&self, store: &str, name: &str) -> Result<Box<dyn super::WriteOnceStorageWriter>, Error> {
+    fn create_write_once_writer(&self, store: &str, name: &str) -> Result<Box<dyn super::WriteOnceStorageWriter>, Error> {
         let temp_path = Path::new(&self.base_temp_dir)
             .join(Uuid::new_v4().to_string());
 

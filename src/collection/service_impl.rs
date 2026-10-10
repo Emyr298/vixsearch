@@ -3,11 +3,12 @@ use std::{collections::HashMap, sync::{Arc, RwLock}};
 use dashmap::{DashMap, Entry};
 use uuid::Uuid;
 
-use crate::{collection::{service::{CollectionLoader, CollectionPort, CollectionService}, service_param_result::CreateParam, state::{CollectionState, CollectionStatus, collection_ids}}, document::{Document, DocumentCollectionLifecycle, RawValue, Value}, errcode::{EXISTS, NOT_FOUND, NOT_READY}, utils::vixerr::Error};
+use crate::{collection::{entity::{CollectionLifecycleEvent, CollectionLifecycleEventCreated, CollectionLifecycleEventDeleted, CollectionLifecycleEventLoaded}, service::{CollectionLoader, CollectionPort, CollectionService}, service_param_result::CreateParam, state::{CollectionState, CollectionStatus, collection_ids}}, common::{RawValue, Value}, errcode::{EXISTS, NOT_FOUND, NOT_READY}, utils::{handler::handler::HandlerGroupReader, vixerr::Error}};
 
 pub struct ServiceImpl {
     adapter: Arc<dyn CollectionPort>,
-    document_collection_lifecycle: Arc<dyn DocumentCollectionLifecycle>,
+
+    lifecycle_handlers: Arc<dyn HandlerGroupReader<CollectionLifecycleEvent>>,
 
     // in the future, when decide to add alter collection, should reassess rwlock since it will block read mid traffic
     collection_by_id: DashMap<String, Arc<RwLock<CollectionState>>>,
@@ -15,10 +16,13 @@ pub struct ServiceImpl {
 }
 
 impl ServiceImpl {
-    pub fn new(adapter: Arc<dyn CollectionPort>, document_collection_lifecycle: Arc<dyn DocumentCollectionLifecycle>) -> (Arc<dyn CollectionService>, Arc<dyn CollectionLoader>) {
+    pub fn new(
+        adapter: Arc<dyn CollectionPort>,
+        lifecycle_handlers: Arc<dyn HandlerGroupReader<CollectionLifecycleEvent>>,
+    ) -> (Arc<dyn CollectionService>, Arc<dyn CollectionLoader>) {
         let arc = Arc::new(ServiceImpl {
             adapter,
-            document_collection_lifecycle,
+            lifecycle_handlers,
             collection_by_id: DashMap::new(),
             collection_by_internal_id: DashMap::new(),
         });
@@ -45,14 +49,19 @@ impl CollectionLoader for ServiceImpl {
         }
 
         // Sync to other services
-        self.document_collection_lifecycle.load_collections(&collection_ids(&collection_states))?;
+        let event = CollectionLifecycleEvent::Loaded(CollectionLifecycleEventLoaded {
+            collection_ids: collection_ids(&collection_states)
+        });
 
+        for handler in self.lifecycle_handlers.list().iter() {
+            handler.handle(&event)?;
+        }
+
+        // Mark as ready after sync
         for (_, _, collection_state) in &collection_states {
             let mut collection_write = collection_state.write().unwrap();
             collection_write.status = CollectionStatus::Ready;
         }
-
-        // TODO: need to rerun uncommitted translog queries (but it should be query service's responsibility)
 
         Ok(())
     }
@@ -81,7 +90,13 @@ impl CollectionService for ServiceImpl {
         self.collection_by_internal_id.insert(internal_id.clone(), collection_arc.clone());
 
         // Sync to other services
-        self.document_collection_lifecycle.add_collection(&internal_id)?;
+        let event = CollectionLifecycleEvent::Created(CollectionLifecycleEventCreated {
+            collection_id: param.id.to_string(),
+        });
+
+        for handler in self.lifecycle_handlers.list().iter() {
+            handler.handle(&event)?;
+        }
 
         if let Err(e) = self.adapter.create(param.create_port_param(&internal_id)) {
             self.collection_by_id.remove(&param.id);
@@ -116,7 +131,13 @@ impl CollectionService for ServiceImpl {
         }
 
         // Sync to other services
-        self.document_collection_lifecycle.delete_collection(&internal_id)?;
+        let event = CollectionLifecycleEvent::Deleted(CollectionLifecycleEventDeleted {
+            collection_id: id.to_string(),
+        });
+
+        for handler in self.lifecycle_handlers.list().iter() {
+            handler.handle(&event)?;
+        }
 
         self.collection_by_id.remove(id);
         self.collection_by_internal_id.remove(&internal_id);

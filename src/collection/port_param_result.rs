@@ -1,4 +1,4 @@
-use crate::document::ValueType;
+use crate::common::ValueType;
 
 pub struct CreatePortParam {
     pub id: String,

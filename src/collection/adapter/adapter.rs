@@ -75,7 +75,7 @@ impl CollectionPort for CollectionAdapter {
         let (store, name) = schema_store_name(&internal_id);
         let schema_buf = SchemaBlock::from_create_port_param(param).encode();
 
-        let mut schema_writer = self.storage.get_write_once_writer(&store, &name)?;
+        let mut schema_writer = self.storage.create_write_once_writer(&store, &name)?;
         schema_writer.write(&schema_buf)?;
         schema_writer.commit()?;
 
@@ -84,7 +84,7 @@ impl CollectionPort for CollectionAdapter {
         let result = self.get_latest_commit()?;
         let commit = Commit::add_collection(&internal_id, result);
 
-        let mut commit_writer = self.storage.get_write_once_writer(COMMIT_STORE, &commit.name())?;
+        let mut commit_writer = self.storage.create_write_once_writer(COMMIT_STORE, &commit.name())?;
         let commit_buf = CommitBlock::from_commit(commit).encode();
 
         commit_writer.write(&commit_buf)?;
@@ -96,7 +96,7 @@ impl CollectionPort for CollectionAdapter {
 
         let result = self.get_latest_commit()?;
         if let Some(commit) = Commit::delete_collection(internal_id, result) {
-            let mut commit_writer = self.storage.get_write_once_writer(COMMIT_STORE, &commit.name())?;
+            let mut commit_writer = self.storage.create_write_once_writer(COMMIT_STORE, &commit.name())?;
             let commit_buf = CommitBlock::from_commit(commit).encode();
 
             commit_writer.write(&commit_buf)?;
