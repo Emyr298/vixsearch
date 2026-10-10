@@ -36,6 +36,7 @@ impl QueryService for QueryServiceImpl {
     }
 
     // TODO: need to rerun uncommitted translog queries
+    // TODO: uncommitted bukan berarti belum pernah di-insert -> BISA AJA UDAH TP GAGAL PAS COMMIT OP SEQ
 
     fn insert(&self, param: InsertParam) -> Result<Document, Error> {
         let parsed_payload = self.collection_service.parse_raw_document_payload_by_id(&param.collection_id, &param.payload)?;

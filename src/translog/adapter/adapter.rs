@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{document::OpSeqCommitEvent, storage::Storage, translog::{GetTransactionsParam, GetTransactionsResult, InsertPortParam, LoadManyResult, LoadOrCreate, TranslogPort}, utils::{observer::observer::Observer, vixerr::Error}};
+use crate::{document::OpSeqCommitEvent, storage::Storage, translog::{GetTransactionsParam, GetTransactionsResult, InsertPortParam, LoadManyResult, LoadOrCreateResult, TranslogPort}, utils::{observer::observer::Observer, vixerr::Error}};
 
 pub const STORE: &str = "translog";
 pub const NAME: &str = "append.log";
@@ -31,11 +31,11 @@ impl TranslogPort for TranslogAdapter {
         todo!()
     }
     
-    fn commit(&self, op_seq: u64) -> Result<(), Error> {
+    fn commit_op_seq(&self, op_seq: u64) -> Result<(), Error> {
         todo!()
     }
     
-    fn load_or_create(&self, collection_id: &str) -> Result<LoadOrCreate, Error> {
+    fn load_or_create(&self, collection_id: &str) -> Result<LoadOrCreateResult, Error> {
         todo!()
     }
     

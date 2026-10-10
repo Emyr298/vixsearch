@@ -1,4 +1,6 @@
-use crate::translog::{InsertParam, Transaction, state::SegmentState};
+use crate::translog::{InsertParam, Transaction};
+
+// Params
 
 pub struct GetTransactionsParam {
     pub collection_id: String,
@@ -6,34 +8,29 @@ pub struct GetTransactionsParam {
     pub count: u64,
 }
 
-pub type InsertPortParam = InsertParam;
-
-pub struct LoadOrCreate {
+pub struct InsertPortParam {
     pub collection_id: String,
-    pub committed_op_seq: u64,
-    pub segments: Vec<LoadStateSegment>,
+    pub segment_id: String,
+    pub op_seq: u64,
+    pub transaction: Transaction,
 }
 
-impl LoadOrCreate {
-    pub fn segment_ids(&self) -> Vec<String> {
-        self.segments.iter()
-            .map(|s| s.id.clone())
-            .collect()
-    }
+// Results
+
+pub struct InsertPortResult {
+    pub byte_size: u64,
 }
 
-pub struct LoadStateSegment {
+pub struct LoadOrCreateResult {
+    pub segments: Vec<LoadOrCreateResultSegment>,
+    pub last_committed_op_seq: u64,
+    pub last_pending_op_seq: u64,
+}
+
+pub struct LoadOrCreateResultSegment {
     pub id: String,
+    pub byte_size: u64,
     pub minimum_op_seq: u64,
-}
-
-impl LoadStateSegment {
-    pub fn segment_state(&self) -> SegmentState {
-        SegmentState {
-            id: self.id.clone(),
-            minimum_op_seq: self.minimum_op_seq,
-        }
-    }
 }
 
 pub struct GetTransactionsResult {
