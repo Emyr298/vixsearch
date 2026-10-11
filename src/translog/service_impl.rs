@@ -2,31 +2,36 @@ use std::{sync::{Arc, atomic::AtomicU64}, thread, time::Duration};
 
 use dashmap::DashMap;
 
-use crate::{collection::CollectionLifecycleEvent, document::OpSeqCommitEvent, errcode::{FATAL_ERROR, NOT_FOUND}, translog::{GetTransactionsParam, InsertPortParam, LoadStateResult, OpSeqStateDropEvent, Transaction, TranslogPort, TranslogService, TranslogStreamer, service_param_result::InsertParam, state::{CollectionState, SegmentState}, streamer_impl::TranslogStreamerImpl}, utils::{handler::handler::Handler, observer::{observer::{Observer, ObserverGroupReader}, observer_group::ObserverGroup}, vixerr::Error, vixpool::Pool, vixscheduler::Scheduler}};
+use crate::{collection::CollectionLifecycleEvent, document::OpSeqCommitEvent, errcode::{FATAL_ERROR, NOT_FOUND}, translog::{GetTransactionsParam, InsertPortParam, SegmentStateDropEvent, Transaction, TranslogPort, TranslogService, TranslogStreamer, service_param_result::InsertParam, state::{CollectionState}, streamer_impl::TranslogStreamerImpl}, utils::{handler::handler::Handler, observer::{observer::{Observer, ObserverGroupReader}, observer_group::ObserverGroup}, vixerr::Error, vixpool::Pool, vixscheduler::Scheduler}};
 
 pub struct TranslogServiceImpl {
     adapter: Arc<dyn TranslogPort>,
     state_by_collection_id: DashMap<String, Arc<CollectionState>>,
     commit_pool: Arc<dyn Pool>,
-    op_seq_state_drop_observers: Arc<dyn ObserverGroupReader<OpSeqStateDropEvent>>,
     segment_byte_size_threshold: u64,
+
+    // observers
+    segment_state_drop_observers: Arc<dyn ObserverGroupReader<SegmentStateDropEvent>>,
 }
 
 impl TranslogServiceImpl {
     pub fn new(
         adapter: Arc<dyn TranslogPort>,
         commit_pool: Arc<dyn Pool>,
-    ) -> (Arc<dyn TranslogService>, Arc<dyn Handler<CollectionLifecycleEvent>>, Arc<dyn Observer<OpSeqCommitEvent>>) {
-        let (op_seq_state_drop_readers, op_seq_state_drop_writers) = ObserverGroup::new(Vec::<Arc<dyn Observer<OpSeqStateDropEvent>>>::new());
+        segment_byte_size_threshold: u64,
+    ) -> (Arc<dyn TranslogService>, Arc<dyn Handler<CollectionLifecycleEvent>>, Arc<dyn Observer<SegmentStateDropEvent>>) {
+
+        let (drop_readers, drop_writers) = ObserverGroup::new(Vec::<Arc<dyn Observer<SegmentStateDropEvent>>>::new());
 
         let arc = Arc::new(TranslogServiceImpl {
             adapter,
             state_by_collection_id: DashMap::new(),
             commit_pool,
-            op_seq_state_drop_observers: op_seq_state_drop_readers,
+            segment_byte_size_threshold,
+            segment_state_drop_observers: drop_readers,
         });
 
-        op_seq_state_drop_writers.register(arc.clone());
+        drop_writers.register(arc.clone());
 
         (arc.clone(), arc.clone(), arc)
     }
@@ -80,6 +85,7 @@ impl Handler<CollectionLifecycleEvent> for TranslogServiceImpl {
                             collection_id,
                             result,
                             self.segment_byte_size_threshold,
+                            self.segment_state_drop_observers.clone(),
                         ))
                     );
                 }
@@ -93,6 +99,7 @@ impl Handler<CollectionLifecycleEvent> for TranslogServiceImpl {
                         &e.collection_id,
                         result,
                         self.segment_byte_size_threshold,
+                        self.segment_state_drop_observers.clone(),
                     ))
                 );
             },
@@ -132,19 +139,16 @@ impl Observer<OpSeqCommitEvent> for TranslogServiceImpl {
     }
 }
 
-// // TODO: maybe we can make it work in another thread to not block the main thread -> for another services too
-// impl Observer<OpSeqStateDropEvent> for TranslogServiceImpl {
-//     fn observe(&self, event: &OpSeqStateDropEvent) {
-//         let collection_id = event.collection_id.clone();
-//         let adapter = self.adapter.clone();
+// TODO: please for another services, make it thread::spawn or submit job (without block) so it won't block the publisher's thread
+impl Observer<SegmentStateDropEvent> for TranslogServiceImpl {
+    fn observe(&self, event: &SegmentStateDropEvent) {
+        let event = event.clone();
+        let adapter = self.adapter.clone();
 
-//         thread::spawn(move || {
-//             if let Err(e) = adapter.unload(&collection_id) {
-//                 println!("Failed to release translog for collection {}: {}", collection_id, e);
-//             }
-//         });
-//     }
-// }
-
-// // TODO: segment drop event?
-// TODO: gimana kalo commit duluan baru insert? -> harusnya gpp since yg diedit commit op seq aja
+        thread::spawn(move || {
+            if let Err(e) = adapter.unload(&event.collection_id, &event.segment_id) {
+                println!("Failed to release translog for collection {}: {}", &event.collection_id, e);
+            }
+        });
+    }
+}

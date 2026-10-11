@@ -1,3 +1,4 @@
+pub mod active;
 pub mod http;
 pub mod vixalg;
 pub mod vixerr;

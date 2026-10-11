@@ -17,6 +17,8 @@ pub struct InsertDetail {
     pub payload: HashMap<String, Value>
 }
 
-pub struct OpSeqStateDropEvent {
+#[derive(Clone)]
+pub struct SegmentStateDropEvent {
     pub collection_id: String,
+    pub segment_id: String,
 }

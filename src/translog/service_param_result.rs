@@ -18,7 +18,3 @@ impl InsertParam {
         }
     }
 }
-
-pub struct LoadStateResult {
-    pub committed_op_seq_by_collection_id: HashMap<String, u64>,
-}

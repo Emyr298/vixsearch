@@ -3,75 +3,7 @@ use std::{collections::VecDeque, ops::Deref, process::Output, sync::{Arc, Mutex,
 use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
 
-use crate::{translog::{LoadOrCreateResult, LoadOrCreateResultSegment, OpSeqStateDropEvent}, utils::{observer::observer::ObserverGroupReader, vixerr::Error}};
-
-// move to common
-
-struct Inner<T> {
-    inner: T,
-    is_deactivating: AtomicBool,
-    access_count: AtomicUsize,
-}
-
-pub struct ActiveGuard<T> {
-    inner: Arc<Inner<T>>,
-}
-
-impl<T> Deref for ActiveGuard<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner.inner
-    }
-}
-
-impl<T> Drop for ActiveGuard<T> {
-    fn drop(&mut self) {
-        self.inner.access_count.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-
-pub struct ActiveHandle<T> {
-    inner: Arc<Inner<T>>,
-}
-
-impl<T> ActiveHandle<T> {
-    pub fn new(inner: T) -> Self {
-        Self {
-            inner: Arc::new(Inner {
-                inner,
-                is_deactivating: AtomicBool::new(false),
-                access_count: AtomicUsize::new(0),
-            }),
-        }
-    }
-
-    pub fn get(&self) -> Option<ActiveGuard<T>> {
-        if self.inner.is_deactivating.load(Ordering::Acquire) {
-            return None;
-        }
-
-        self.inner.access_count.fetch_add(1, Ordering::AcqRel);
-
-        if self.inner.is_deactivating.load(Ordering::Acquire) {
-            self.inner.access_count.fetch_sub(1, Ordering::AcqRel);
-            return None;
-        }
-
-        Some(ActiveGuard { inner: self.inner.clone() })
-    }
-
-    pub fn mark_for_deactivation(&self) {
-        self.inner.is_deactivating.store(true, Ordering::Release);
-    }
-
-    pub fn is_deactivable(&self) -> bool {
-        self.inner.is_deactivating.load(Ordering::Acquire)
-            && self.inner.access_count.load(Ordering::Acquire) == 0
-    }
-}
-
-// end
+use crate::{translog::{LoadOrCreateResult, LoadOrCreateResultSegment, SegmentStateDropEvent}, utils::{active::active::{ActiveGuard, ActiveHandle}, observer::observer::ObserverGroupReader, vixerr::Error}};
 
 pub struct CollectionState {
     collection_id: String,
@@ -83,17 +15,8 @@ pub struct CollectionState {
 
     // segments
     segments: RwLock<VecDeque<ActiveHandle<CollectionStateSegment>>>,
-
-    // drop_observers: Arc<dyn ObserverGroupReader<OpSeqStateDropEvent>>,
-
     segment_byte_size_threshold: u64,
-}
-
-// TODO: purge unused segments -> also on segment purge event
-pub struct CollectionStateSegment {
-    pub id: String,
-    pub byte_size: AtomicU64, // on load, should add one if last segment byte size reached threshold
-    pub minimum_op_seq: u64,
+    segment_drop_observers: Arc<dyn ObserverGroupReader<SegmentStateDropEvent>>,
 }
 
 impl CollectionState {
@@ -101,6 +24,7 @@ impl CollectionState {
         collection_id: &str,
         load_or_create_result: LoadOrCreateResult,
         segment_byte_size_threshold: u64,
+        segment_drop_observers: Arc<dyn ObserverGroupReader<SegmentStateDropEvent>>,
     ) -> Self {
         let no_active_segment = load_or_create_result.segments.last()
             .map_or(true, |s| s.byte_size >= segment_byte_size_threshold);
@@ -108,16 +32,20 @@ impl CollectionState {
         let mut vec_segments = load_or_create_result.segments.into_iter()
             .map(|s| ActiveHandle::new(CollectionStateSegment{
                 id: s.id,
+                collection_id: collection_id.to_string(),
                 byte_size: AtomicU64::new(s.byte_size),
                 minimum_op_seq: s.minimum_op_seq,
+                drop_observers: segment_drop_observers.clone(),
             }))
             .collect::<VecDeque<ActiveHandle<CollectionStateSegment>>>();
 
         if no_active_segment {
             vec_segments.push_back(ActiveHandle::new(CollectionStateSegment{
                 id: uuid::Uuid::new_v4().to_string(),
+                collection_id: collection_id.to_string(),
                 byte_size: AtomicU64::new(0),
                 minimum_op_seq: load_or_create_result.last_pending_op_seq + 1,
+                drop_observers: segment_drop_observers.clone(),
             }));
         }
 
@@ -128,6 +56,7 @@ impl CollectionState {
             commit_lock: Mutex::new(()),
             segments: RwLock::new(vec_segments),
             segment_byte_size_threshold: segment_byte_size_threshold,
+            segment_drop_observers: segment_drop_observers,
         }
     }
 
@@ -144,8 +73,10 @@ impl CollectionState {
         if cur_byte_size >= self.segment_byte_size_threshold {
             let segment = CollectionStateSegment {
                 id: uuid::Uuid::new_v4().to_string(),
+                collection_id: self.collection_id.clone(),
                 byte_size: AtomicU64::new(0),
                 minimum_op_seq: op_seq + 1,
+                drop_observers: self.segment_drop_observers.clone(),
             };
 
             segments.push_back(ActiveHandle::new(segment));
@@ -200,14 +131,24 @@ impl CollectionState {
     } 
 }
 
-// impl Drop for CollectionState {
-//     fn drop(&mut self) {
-//         let event = OpSeqStateDropEvent {
-//             collection_id: self.collection_id.clone(),
-//         };
+pub struct CollectionStateSegment {
+    pub id: String,
+    pub collection_id: String,
+    pub minimum_op_seq: u64,
 
-//         for observer in self.drop_observers.list().iter() {
-//             observer.observe(&event);
-//         }
-//     }
-// }
+    byte_size: AtomicU64,
+    drop_observers: Arc<dyn ObserverGroupReader<SegmentStateDropEvent>>,
+}
+
+impl Drop for CollectionStateSegment {
+    fn drop(&mut self) {
+        let event = SegmentStateDropEvent {
+            collection_id: self.collection_id.clone(),
+            segment_id: self.id.clone(),
+        };
+
+        for observer in self.drop_observers.list().iter() {
+            observer.observe(&event);
+        }
+    }
+}
