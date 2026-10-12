@@ -49,13 +49,12 @@ impl QueryService for QueryServiceImpl {
         let document_service = self.document_service.clone();
         let translog_service = self.translog_service.clone();
         let global_counter = self.global_counter.clone();
+        
         let doc = self.serial.submit(Box::new(move || {
             let op_seq = global_counter.next();
             translog_service.insert(parsed_param.translog_insert_param(op_seq))?;
 
-            let doc = document_service.insert(&parsed_param.collection_id.clone(), parsed_param.document_insert_param(op_seq))?;
-
-            Ok(doc)
+            document_service.insert(&parsed_param.collection_id, parsed_param.document_insert_param(op_seq))
         }))?;
 
         Ok(doc)

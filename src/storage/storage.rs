@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::utils::vixerr::Error;
 
 #[deprecated]
@@ -17,7 +19,7 @@ pub trait LegacyStorageAccessor: Send + Sync {
 
 pub trait Storage: Send + Sync {
     fn get_all_name_sorted(&self, store: &str) -> Result<Vec<String>, Error>;
-    fn create_append_only_writer(&self, store: &str, name: &str, last_offset: u64) -> Result<Box<dyn AppendOnlyStorageWriter>, Error>;
+    fn create_append_only_writer(&self, store: &str, name: &str, last_offset: u64) -> Result<Arc<dyn AppendOnlyStorageWriter>, Error>;
     fn create_write_once_writer(&self, store: &str, name: &str) -> Result<Box<dyn WriteOnceStorageWriter>, Error>;
     fn get_reader(&self, store: &str, name: &str) -> Result<Box<dyn StorageReader>, Error>;
     fn close(&self, store: &str, name: &str) -> Result<(), Error>;
@@ -26,10 +28,11 @@ pub trait Storage: Send + Sync {
 pub trait StorageReader: Send + Sync {
     fn read_all(&self) -> Result<Vec<u8>, Error>;
     fn read(&self, offset: u64, size: u64) -> Result<Vec<u8>, Error>;
+    fn byte_size(&self) -> Result<u64, Error>;
 }
 
 pub trait AppendOnlyStorageWriter {
-    fn write(&mut self, data: &[u8]) -> Result<(), Error>;
+    fn write(&self, data: &[u8]) -> Result<(), Error>;
     fn flush(&self) -> Result<(), Error>;
 }
 

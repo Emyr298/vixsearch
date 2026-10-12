@@ -3,7 +3,7 @@ use std::{ffi::OsString, fs::{self, DirEntry, File, OpenOptions}, io::ErrorKind,
 use dashmap::{DashMap, Entry};
 use uuid::Uuid;
 
-use crate::{errcode::FATAL_ERROR, storage::{Storage, file_storage_reader::FileStorageReader, file_storage_writer_append_only::AppendOnlyFileStorageWriter, file_storage_writer_write_once::WriteOnceFileStorageWriter}, utils::vixerr::Error};
+use crate::{errcode::FATAL_ERROR, storage::{AppendOnlyStorageWriter, Storage, WriteOnceStorageWriter, file_storage_reader::FileStorageReader, file_storage_writer_append_only::AppendOnlyFileStorageWriter, file_storage_writer_write_once::WriteOnceFileStorageWriter}, utils::vixerr::Error};
 
 pub struct FileStorage {
     file_reader_by_path: DashMap<PathBuf, Arc<File>>,
@@ -61,7 +61,7 @@ impl Storage for FileStorage {
         Ok(names)
     }
 
-    fn create_append_only_writer(&self, store: &str, name: &str, last_offset: u64) -> Result<Box<dyn super::AppendOnlyStorageWriter>, Error> {
+    fn create_append_only_writer(&self, store: &str, name: &str, last_offset: u64) -> Result<Arc<dyn AppendOnlyStorageWriter>, Error> {
         let path = Path::new(&self.base_dir)
             .join(store)
             .join(name);
@@ -115,7 +115,7 @@ impl Storage for FileStorage {
         Ok(AppendOnlyFileStorageWriter::new(file, last_offset))
     }
     
-    fn create_write_once_writer(&self, store: &str, name: &str) -> Result<Box<dyn super::WriteOnceStorageWriter>, Error> {
+    fn create_write_once_writer(&self, store: &str, name: &str) -> Result<Box<dyn WriteOnceStorageWriter>, Error> {
         let temp_path = Path::new(&self.base_temp_dir)
             .join(Uuid::new_v4().to_string());
 

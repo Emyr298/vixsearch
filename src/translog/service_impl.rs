@@ -2,15 +2,11 @@ use std::{sync::{Arc, atomic::AtomicU64}, thread, time::Duration};
 
 use dashmap::DashMap;
 
-use crate::{collection::CollectionLifecycleEvent, document::OpSeqCommitEvent, errcode::{FATAL_ERROR, NOT_FOUND}, translog::{GetTransactionsParam, InsertPortParam, SegmentStateDropEvent, Transaction, TranslogPort, TranslogService, TranslogStreamer, service_param_result::InsertParam, state::{CollectionState}, streamer_impl::TranslogStreamerImpl}, utils::{handler::handler::Handler, observer::{observer::{Observer, ObserverGroupReader}, observer_group::ObserverGroup}, vixerr::Error, vixpool::Pool, vixscheduler::Scheduler}};
+use crate::{collection::CollectionLifecycleEvent, document::OpSeqCommitEvent, errcode::{FATAL_ERROR, NOT_FOUND}, translog::{GetTransactionsParam, InsertPortParam, SegmentStateDropEvent, StreamTrxLogsParam, Transaction, TranslogPort, TranslogService, TranslogStreamer, service_param_result::InsertParam, state::CollectionState, streamer_impl::TranslogStreamerImpl}, utils::{handler::handler::Handler, observer::{observer::{Observer, ObserverGroupReader}, observer_group::ObserverGroup}, vixerr::Error, vixpool::Pool, vixscheduler::Scheduler}};
 
 pub struct TranslogServiceImpl {
     adapter: Arc<dyn TranslogPort>,
     state_by_collection_id: DashMap<String, Arc<CollectionState>>,
-    commit_pool: Arc<dyn Pool>,
-    segment_byte_size_threshold: u64,
-
-    // observers
     segment_state_drop_observers: Arc<dyn ObserverGroupReader<SegmentStateDropEvent>>,
 }
 
@@ -18,7 +14,7 @@ impl TranslogServiceImpl {
     pub fn new(
         adapter: Arc<dyn TranslogPort>,
         commit_pool: Arc<dyn Pool>,
-        segment_byte_size_threshold: u64,
+        commit_interval: Duration,
     ) -> (Arc<dyn TranslogService>, Arc<dyn Handler<CollectionLifecycleEvent>>, Arc<dyn Observer<SegmentStateDropEvent>>) {
 
         let (drop_readers, drop_writers) = ObserverGroup::new(Vec::<Arc<dyn Observer<SegmentStateDropEvent>>>::new());
@@ -26,8 +22,6 @@ impl TranslogServiceImpl {
         let arc = Arc::new(TranslogServiceImpl {
             adapter,
             state_by_collection_id: DashMap::new(),
-            commit_pool,
-            segment_byte_size_threshold,
             segment_state_drop_observers: drop_readers,
         });
 
@@ -38,22 +32,23 @@ impl TranslogServiceImpl {
 }
 
 impl TranslogService for TranslogServiceImpl {
-    fn stream_uncommitted_transactions(&self, collection_id: &str) -> Result<Box<dyn TranslogStreamer>, Error> {
-        let state = match self.state_by_collection_id.get(collection_id) {
+    fn stream_trx_logs(&self, param: StreamTrxLogsParam) -> Result<Box<dyn TranslogStreamer>, Error> {
+        let state = match self.state_by_collection_id.get(&param.collection_id) {
             Some(c) => c.clone(),
             None => return Error::code(FATAL_ERROR)
-                .message(format!("Collection not found: {}", collection_id))
+                .message(format!("Collection not found: {}", &param.collection_id))
                 .throw(),
         };
 
-        let streamer = TranslogStreamerImpl::new(
+        Ok(TranslogStreamerImpl::new(
+            &param.collection_id,
             self.adapter.clone(),
             state.clone(),
-            collection_id.to_string(),
-            state.last_committed_op_seq(),
-        );
-
-        Ok(streamer)
+            param.start_op_seq,
+            param.is_continuous,
+            param.max_batch,
+            param.max_outstanding,
+        ))
     }
 
     fn insert(&self, param: InsertParam) -> Result<(), Error> {
@@ -65,9 +60,8 @@ impl TranslogService for TranslogServiceImpl {
         };
 
         let adapter = self.adapter.clone();
-        state.insert(param.op_seq, Box::new(move |active_segment_id| {
-            let result = adapter.insert(param.insert_port_param(&active_segment_id))?;
-            Ok(result.byte_size)
+        state.insert(param.op_seq, Box::new(move |active_segment_id, active_segment_next_offset| {
+            Ok(adapter.insert(param.insert_port_param(&active_segment_id, active_segment_next_offset))?)
         }))
     }
 }
@@ -84,7 +78,6 @@ impl Handler<CollectionLifecycleEvent> for TranslogServiceImpl {
                         Arc::new(CollectionState::new(
                             collection_id,
                             result,
-                            self.segment_byte_size_threshold,
                             self.segment_state_drop_observers.clone(),
                         ))
                     );
@@ -98,7 +91,6 @@ impl Handler<CollectionLifecycleEvent> for TranslogServiceImpl {
                     Arc::new(CollectionState::new(
                         &e.collection_id,
                         result,
-                        self.segment_byte_size_threshold,
                         self.segment_state_drop_observers.clone(),
                     ))
                 );
@@ -109,33 +101,6 @@ impl Handler<CollectionLifecycleEvent> for TranslogServiceImpl {
         }
 
         Ok(())
-    }
-}
-
-impl Observer<OpSeqCommitEvent> for TranslogServiceImpl {
-    fn observe(&self, event: &OpSeqCommitEvent) {
-        let state = match self.state_by_collection_id.get(&event.collection_id) {
-            Some(c) => c.clone(),
-            None => {
-                println!("Failed to op_seq_state_by_collection_id.get: collection id {} not found", event.collection_id);
-                return;
-            },
-        };
-
-        state.set_last_pending_op_seq_if_greater(event.op_seq);
-
-        let event = event.clone();
-        let adapter = self.adapter.clone();
-
-        if let Err(e) = self.commit_pool.submit(Box::new(move || {
-            if let Err(e) = state.try_commit(Box::new(move |last_pending_op_seq| {
-                adapter.commit_op_seq(last_pending_op_seq)
-            })) {
-                eprintln!("Failed to commit op_seq {}: {}", event.op_seq, e);
-            }
-        })) {
-            eprintln!("Failed to submit commit task: {}", e);
-        }
     }
 }
 

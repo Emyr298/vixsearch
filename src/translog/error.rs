@@ -1,0 +1,1 @@
+pub const LOG_TAIL_REACHED: &str = "LOG_TAIL_REACHED";
