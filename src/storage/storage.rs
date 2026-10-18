@@ -19,10 +19,10 @@ pub trait LegacyStorageAccessor: Send + Sync {
 
 pub trait Storage: Send + Sync {
     fn get_all_name_sorted(&self, store: &str) -> Result<Vec<String>, Error>;
-    fn create_append_only_writer(&self, store: &str, name: &str, last_offset: u64) -> Result<Arc<dyn AppendOnlyStorageWriter>, Error>;
+    fn get_or_create_reader(&self, store: &str, name: &str) -> Result<Box<dyn StorageReader>, Error>;
+    fn get_or_create_random_access_writer(&self, store: &str, name: &str) -> Result<Arc<dyn RandomAccessStorageWriter>, Error>;
     fn create_write_once_writer(&self, store: &str, name: &str) -> Result<Box<dyn WriteOnceStorageWriter>, Error>;
-    fn get_reader(&self, store: &str, name: &str) -> Result<Box<dyn StorageReader>, Error>;
-    fn close(&self, store: &str, name: &str) -> Result<(), Error>;
+    fn close(&self, store: &str, name: &str);
 }
 
 pub trait StorageReader: Send + Sync {
@@ -31,8 +31,8 @@ pub trait StorageReader: Send + Sync {
     fn byte_size(&self) -> Result<u64, Error>;
 }
 
-pub trait AppendOnlyStorageWriter {
-    fn write(&self, data: &[u8]) -> Result<(), Error>;
+pub trait RandomAccessStorageWriter: Send + Sync {
+    fn write(&self, offset: u64, data: &[u8]) -> Result<(), Error>;
     fn flush(&self) -> Result<(), Error>;
 }
 

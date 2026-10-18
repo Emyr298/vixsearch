@@ -3,10 +3,11 @@ use std::{ffi::OsString, fs::{self, DirEntry, File, OpenOptions}, io::ErrorKind,
 use dashmap::{DashMap, Entry};
 use uuid::Uuid;
 
-use crate::{errcode::FATAL_ERROR, storage::{AppendOnlyStorageWriter, Storage, WriteOnceStorageWriter, file_storage_reader::FileStorageReader, file_storage_writer_append_only::AppendOnlyFileStorageWriter, file_storage_writer_write_once::WriteOnceFileStorageWriter}, utils::vixerr::Error};
+use crate::{errcode::FATAL_ERROR, storage::{RandomAccessStorageWriter, Storage, WriteOnceStorageWriter, file_storage_reader::FileStorageReader, file_storage_writer_random_access::RandomAccessFileStorageWriter, file_storage_writer_write_once::WriteOnceFileStorageWriter}, utils::vixerr::Error};
 
 pub struct FileStorage {
     file_reader_by_path: DashMap<PathBuf, Arc<File>>,
+    random_access_file_writer_by_path: DashMap<PathBuf, Arc<File>>,
     base_dir: String,
     base_temp_dir: String,
 }
@@ -15,6 +16,7 @@ impl FileStorage {
     pub fn new(base_dir: &str, base_temp_dir: &str) -> Arc<dyn Storage> {
         Arc::new(FileStorage {
             file_reader_by_path: DashMap::new(),
+            random_access_file_writer_by_path: DashMap::new(),
             base_dir: base_dir.to_string(),
             base_temp_dir: base_temp_dir.to_string(),
         })
@@ -61,58 +63,66 @@ impl Storage for FileStorage {
         Ok(names)
     }
 
-    fn create_append_only_writer(&self, store: &str, name: &str, last_offset: u64) -> Result<Arc<dyn AppendOnlyStorageWriter>, Error> {
+    fn get_or_create_random_access_writer(&self, store: &str, name: &str) -> Result<Arc<dyn RandomAccessStorageWriter>, Error> {
         let path = Path::new(&self.base_dir)
             .join(store)
             .join(name);
 
-        if let Some(parent) = path.parent() {
-            if let Err(e) = fs::create_dir_all(parent) {
-                return Error::code(FATAL_ERROR)
-                    .message(format!("failed to create directory {}", parent.display()))
-                    .wrap(e)
-                    .throw();
+        let file_arc = match self.random_access_file_writer_by_path.entry(path.clone()) {
+            Entry::Occupied(f) => Arc::clone(f.get()),
+            Entry::Vacant(v) => {
+                if let Some(parent) = path.parent() {
+                    if let Err(e) = fs::create_dir_all(parent) {
+                        return Error::code(FATAL_ERROR)
+                            .message(format!("failed to create directory {}", parent.display()))
+                            .wrap(e)
+                            .throw();
+                    }
+                }
+
+                let file_result = OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .open(&path);
+
+                let file_arc = match file_result {
+                    Ok(f) => Arc::new(f),
+                    Err(e) => return Error::code(FATAL_ERROR)
+                        .message(format!("failed to open file {}", path.display()))
+                        .wrap(e)
+                        .throw(),
+                };
+
+                if let Err(e) = file_arc.sync_all() {
+                    return Error::code(FATAL_ERROR)
+                        .message("failed to flush file")
+                        .wrap(e)
+                        .throw();
+                }
+
+                if let Some(parent) = path.parent() {
+                    let dir = match File::open(parent) {
+                        Ok(d) => d,
+                        Err(e) => return Error::code(FATAL_ERROR)
+                            .message(format!("failed to open directory {}", parent.display()))
+                            .wrap(e)
+                            .throw(),
+                    };
+                    
+                    if let Err(e) = dir.sync_all() {
+                        return Error::code(FATAL_ERROR)
+                            .message("failed to flush directory")
+                            .wrap(e)
+                            .throw();
+                    }
+                }
+
+                v.insert(file_arc.clone());
+                file_arc
             }
-        }
-
-        let file_result = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .open(&path);
-
-        let file = match file_result {
-            Ok(f) => f,
-            Err(e) => return Error::code(FATAL_ERROR)
-                .message(format!("failed to open file {}", path.display()))
-                .wrap(e)
-                .throw(),
         };
 
-        if let Err(e) = file.sync_all() {
-            return Error::code(FATAL_ERROR)
-                .message("failed to flush file")
-                .wrap(e)
-                .throw();
-        }
-
-        if let Some(parent) = path.parent() {
-            let dir = match File::open(parent) {
-                Ok(d) => d,
-                Err(e) => return Error::code(FATAL_ERROR)
-                    .message(format!("failed to open directory {}", parent.display()))
-                    .wrap(e)
-                    .throw(),
-            };
-            
-            if let Err(e) = dir.sync_all() {
-                return Error::code(FATAL_ERROR)
-                    .message("failed to flush directory")
-                    .wrap(e)
-                    .throw();
-            }
-        }
-
-        Ok(AppendOnlyFileStorageWriter::new(file, last_offset))
+        Ok(RandomAccessFileStorageWriter::new(file_arc))
     }
     
     fn create_write_once_writer(&self, store: &str, name: &str) -> Result<Box<dyn WriteOnceStorageWriter>, Error> {
@@ -157,7 +167,7 @@ impl Storage for FileStorage {
         Ok(WriteOnceFileStorageWriter::new(commit_path, temp_path, file))
     }
     
-    fn get_reader(&self, store: &str, name: &str) -> Result<Box<dyn super::StorageReader>, Error> {
+    fn get_or_create_reader(&self, store: &str, name: &str) -> Result<Box<dyn super::StorageReader>, Error> {
         let path = Path::new(&self.base_dir)
             .join(store)
             .join(name);
@@ -185,13 +195,12 @@ impl Storage for FileStorage {
         Ok(FileStorageReader::new(file_arc))
     }
 
-    fn close(&self, store: &str, name: &str) -> Result<(), Error> {
+    fn close(&self, store: &str, name: &str) {
         let path = Path::new(&self.base_dir)
             .join(store)
             .join(name);
 
         self.file_reader_by_path.remove(&path);
-
-        Ok(())
+        self.random_access_file_writer_by_path.remove(&path);
     }
 }

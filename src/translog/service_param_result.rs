@@ -9,12 +9,13 @@ pub struct InsertParam {
 }
 
 impl InsertParam {
-    pub fn insert_port_param(self, segment_id: &str, segment_next_offset: u64) -> InsertPortParam {
+    pub fn insert_port_param(self, segment_id: &str, segment_byte_size: u64, segment_next_offset: u64) -> InsertPortParam {
         InsertPortParam {
             collection_id: self.collection_id,
             segment_id: segment_id.to_string(),
             op_seq: self.op_seq,
             transaction: self.transaction,
+            segment_byte_size,
             segment_next_offset,
         }
     }

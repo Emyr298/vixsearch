@@ -3,6 +3,7 @@ use std::{collections::VecDeque, ops::Deref, process::Output, sync::{Arc, Mutex,
 use arc_swap::ArcSwap;
 use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
+use event_listener::Event;
 
 use crate::{translog::{InsertPortResult, LoadOrCreateResult, LoadOrCreateResultSegment, SegmentStateDropEvent}, utils::{active::active::{ActiveGuard, ActiveHandle}, observer::observer::ObserverGroupReader, vixerr::Error}};
 
@@ -14,6 +15,8 @@ pub struct CollectionState {
     active_segment_next_offset: AtomicU64,
     active_segment_byte_size: AtomicU64,
     segments: ArcSwap<Vec<Arc<SegmentState>>>, // TODO: reassess whether active handle is needed at all -> accessor can be from difference pod (replica)
+
+    pub insert_event: Event,
 
     drop_observers: Arc<dyn ObserverGroupReader<SegmentStateDropEvent>>,
 }
@@ -39,6 +42,7 @@ impl CollectionState {
             active_segment_next_offset: AtomicU64::new(load_or_create_result.active_segment_next_offset),
             active_segment_byte_size: AtomicU64::new(load_or_create_result.active_segment_byte_size),
             segments: ArcSwap::from_pointee(seg),
+            insert_event: Event::new(),
             drop_observers: segment_drop_observers
         }
     }
@@ -54,17 +58,18 @@ impl CollectionState {
         self.segments.load_full()
     }
 
-    pub fn insert(&self, op_seq: u64, insert_fn: Box<dyn FnOnce(String, u64) -> Result<InsertPortResult, Error> + Send + 'static>) -> Result<(), Error> {
+    pub fn insert(&self, op_seq: u64, insert_fn: Box<dyn FnOnce(String, u64, u64) -> Result<InsertPortResult, Error> + Send + 'static>) -> Result<(), Error> {
         let _lock_guard = self.append_lock.lock().unwrap();
 
         let segments = self.segments.load_full();
         let active_segment = segments.last().unwrap();
 
+        let active_segment_byte_size = self.active_segment_byte_size.load(Ordering::Acquire);
         let active_segment_next_offset = self.active_segment_next_offset.load(Ordering::Acquire);
 
-        let result = insert_fn(active_segment.id.clone(), active_segment_next_offset)?;
+        let result = insert_fn(active_segment.id.clone(), active_segment_byte_size, active_segment_next_offset)?;
 
-        self.active_segment_byte_size.store(result.active_segment_next_offset, Ordering::Release);
+        self.active_segment_next_offset.store(result.active_segment_next_offset, Ordering::Release);
         self.active_segment_byte_size.store(result.active_segment_byte_size, Ordering::Release);
 
         if let Some(added_segment) = result.added_segment {
@@ -79,6 +84,8 @@ impl CollectionState {
 
             self.segments.store(Arc::new(updated_segments));
         }
+
+        self.insert_event.notify(usize::MAX);
         Ok(())
     }
 }

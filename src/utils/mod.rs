@@ -9,3 +9,4 @@ pub mod handler;
 pub mod observer;
 pub mod counter;
 pub mod loader;
+pub mod locker;

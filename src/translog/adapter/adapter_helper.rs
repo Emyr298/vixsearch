@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::common::Value;
-use crate::storage::StorageReader;
+use crate::storage::{RandomAccessStorageWriter, StorageReader};
 use crate::translog::{InsertDetail, LoadOrCreateResult, LoadOrCreateResultSegment, Transaction, TransactionDetail};
 use crate::{errcode::PARSE_ERROR, utils::vixerr::Error};
 
@@ -49,11 +49,17 @@ pub fn next_commit_number(names: &[String]) -> u64 {
 #[derive(Serialize, Deserialize)]
 pub struct Commit {
     pub commit_number: u64,
-    pub last_durable_op_seq: u64,
     pub segment_ids: Vec<String>,
 }
 
 impl Commit {
+    pub fn next(last_commit_opt: Option<Commit>, next_segment_id: &str, next_commit_number: u64) -> Self {
+        Commit {
+            commit_number: next_commit_number,
+            segment_ids: last_commit_opt.map(|c| c.segment_ids).unwrap_or(vec![next_segment_id.to_string()]),
+        }
+    }
+
     pub fn name(&self) -> String {
         format!("commit_{:016x}", self.commit_number)
     }
@@ -100,7 +106,7 @@ impl CommitBlock {
         Ok(block)
     }
 
-    pub fn encode(self) -> Vec<u8> {
+    pub fn to_buf(self) -> Vec<u8> {
         self.to_bytes().unwrap()
     }
 
@@ -125,8 +131,6 @@ pub fn empty_load_or_create_result() -> LoadOrCreateResult {
             id: Uuid::new_v4().to_string(),
             minimum_op_seq: 0,
         }],
-        last_durable_op_seq: 0,
-        last_appended_op_seq: 0,
     }
 }
 
@@ -152,6 +156,22 @@ pub struct SegmentBlockHeader {
 }
 
 impl SegmentBlockHeader {
+    pub fn from_trx(trx_buf: &[u8]) -> Result<Self, Error> {
+        let trx_len = trx_buf.len() as u64;
+
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(&trx_len.to_le_bytes());
+        hasher.update(trx_buf);
+
+        let hash = hasher.finalize().to_le_bytes();
+        
+        Ok(SegmentBlockHeader {
+            magic: *BLOCK_MAGIC,
+            transaction_hash: hash,
+            transaction_len: trx_len,
+        })
+    }
+
     pub fn from_buf(buf: Vec<u8>, max_transaction_len: u64) -> Result<Self, Error> {
         let (_, header) = match SegmentBlockHeader::from_bytes((&buf, 0)) {
             Ok(b) => b,
@@ -167,7 +187,6 @@ impl SegmentBlockHeader {
                 .throw()
         }
 
-        // TODO: dont forget to use hash later
         if header.transaction_len > max_transaction_len {
             return Error::code(PARSE_ERROR)
                 .message("block transaction length is more than maximum")
@@ -175,6 +194,10 @@ impl SegmentBlockHeader {
         }
         
         Ok(header)
+    }
+
+    pub fn to_buf(&self) -> Vec<u8> {
+        self.to_bytes().unwrap()
     }
 
     pub fn validate_transaction(&self, transaction_buf: &[u8]) -> Result<(), Error> {
@@ -195,6 +218,8 @@ impl SegmentBlockHeader {
     }
 }
 
+pub const TRANSACTION_TYPE_INSERT_MAGIC: &[u8; 4] = b"INST";
+
 #[derive(Debug, PartialEq, DekuRead, DekuWrite)]
 pub struct SegmentBlockTransaction {
     transaction_type: [u8; 4],
@@ -204,6 +229,33 @@ pub struct SegmentBlockTransaction {
 }
 
 impl SegmentBlockTransaction {
+    pub fn from_trx(trx: &Transaction) -> Result<Self, Error> {
+        let mut trx_type: [u8; 4];
+
+        let detail_buf = match &trx.detail {
+            TransactionDetail::Insert(d) => {
+                trx_type = *TRANSACTION_TYPE_INSERT_MAGIC;
+
+                match rmp_serde::to_vec(&SegmentBlockTransactionDetailInsert {
+                    document_id: d.document_id.clone(),
+                    payload: d.payload.clone(),
+                }) {
+                    Ok(b) => b,
+                    Err(e) => return Error::code(PARSE_ERROR)
+                        .message("failed to serialize transaction detail")
+                        .wrap(e)
+                        .throw(),
+                }
+            }
+        };
+
+        Ok(SegmentBlockTransaction {
+            transaction_type: trx_type,
+            op_seq: trx.op_seq,
+            detail: detail_buf,
+        })
+    }
+
     pub fn from_buf(buf: Vec<u8>) -> Result<Self, Error> {
         let (_, transaction) = match SegmentBlockTransaction::from_bytes((&buf, 0)) {
             Ok(b) => b,
@@ -215,9 +267,13 @@ impl SegmentBlockTransaction {
         Ok(transaction)
     }
 
+    pub fn to_buf(&self) -> Vec<u8> {
+        self.to_bytes().unwrap()
+    }
+
     pub fn detail(&self) -> Result<SegmentBlockTransactionDetail, Error> {
         match &self.transaction_type {
-            b"INST" => {
+            TRANSACTION_TYPE_INSERT_MAGIC => {
                 let detail: SegmentBlockTransactionDetailInsert = match rmp_serde::from_slice(&self.detail) {
                     Ok(r) => r,
                     Err(e) => return Error::code(PARSE_ERROR)
@@ -280,4 +336,18 @@ pub fn read_transaction_log(reader: &Box<dyn StorageReader>, offset: u64, collec
         },
         offset + HEADER_LEN + block_header.transaction_len
     ))
+}
+
+pub fn create_trx_log_buffer(collection_id: &str, trx: Transaction) -> Result<Vec<u8>, Error> {
+    let trx_block = SegmentBlockTransaction::from_trx(&trx)?;
+    let trx_buf = trx_block.to_buf();
+
+    let header_block = SegmentBlockHeader::from_trx(&trx_buf)?;
+    let header_buf = header_block.to_buf();
+
+    let mut buffer = Vec::new();
+    buffer.extend_from_slice(&header_buf);
+    buffer.extend_from_slice(&trx_buf);
+
+    Ok(buffer)
 }

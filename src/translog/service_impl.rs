@@ -8,6 +8,7 @@ pub struct TranslogServiceImpl {
     adapter: Arc<dyn TranslogPort>,
     state_by_collection_id: DashMap<String, Arc<CollectionState>>,
     segment_state_drop_observers: Arc<dyn ObserverGroupReader<SegmentStateDropEvent>>,
+    stream_insert_wait_timeout: Duration,
 }
 
 impl TranslogServiceImpl {
@@ -15,6 +16,7 @@ impl TranslogServiceImpl {
         adapter: Arc<dyn TranslogPort>,
         commit_pool: Arc<dyn Pool>,
         commit_interval: Duration,
+        stream_insert_wait_timeout: Duration,
     ) -> (Arc<dyn TranslogService>, Arc<dyn Handler<CollectionLifecycleEvent>>, Arc<dyn Observer<SegmentStateDropEvent>>) {
 
         let (drop_readers, drop_writers) = ObserverGroup::new(Vec::<Arc<dyn Observer<SegmentStateDropEvent>>>::new());
@@ -23,6 +25,7 @@ impl TranslogServiceImpl {
             adapter,
             state_by_collection_id: DashMap::new(),
             segment_state_drop_observers: drop_readers,
+            stream_insert_wait_timeout,
         });
 
         drop_writers.register(arc.clone());
@@ -48,6 +51,7 @@ impl TranslogService for TranslogServiceImpl {
             param.is_continuous,
             param.max_batch,
             param.max_outstanding,
+            self.stream_insert_wait_timeout,
         ))
     }
 
@@ -60,8 +64,8 @@ impl TranslogService for TranslogServiceImpl {
         };
 
         let adapter = self.adapter.clone();
-        state.insert(param.op_seq, Box::new(move |active_segment_id, active_segment_next_offset| {
-            Ok(adapter.insert(param.insert_port_param(&active_segment_id, active_segment_next_offset))?)
+        state.insert(param.op_seq, Box::new(move |active_segment_id, active_segment_byte_size, active_segment_next_offset| {
+            Ok(adapter.insert(param.insert_port_param(&active_segment_id, active_segment_byte_size, active_segment_next_offset))?)
         }))
     }
 }
@@ -111,9 +115,7 @@ impl Observer<SegmentStateDropEvent> for TranslogServiceImpl {
         let adapter = self.adapter.clone();
 
         thread::spawn(move || {
-            if let Err(e) = adapter.unload(&event.collection_id, &event.segment_id) {
-                println!("Failed to release translog for collection {}: {}", &event.collection_id, e);
-            }
+            adapter.unload(&event.collection_id, &event.segment_id);
         });
     }
 }

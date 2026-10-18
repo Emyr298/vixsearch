@@ -181,6 +181,7 @@ impl LSMDocumentPort for LSMDocumentAdapter {
         Ok(kv_pairs)
     }
 
+    // TODO: i think commit logic is missed
     fn flush_segment(&self, collection_id: &str, segment_id: &str, sorted_key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<SegmentMetadata, Error> {
         let store = store(collection_id);
         let name = name(segment_id);

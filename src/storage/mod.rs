@@ -3,7 +3,7 @@ mod legacy_file_storage;
 mod legacy_file_storage_accessor;
 mod file_storage;
 mod file_storage_reader;
-mod file_storage_writer_append_only;
+mod file_storage_writer_random_access;
 mod file_storage_writer_write_once;
 mod error;
 

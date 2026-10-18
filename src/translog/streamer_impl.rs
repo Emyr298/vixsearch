@@ -1,4 +1,6 @@
-use std::{sync::{Arc, mpsc::{self, Receiver, SyncSender}}, thread};
+use std::{sync::{Arc, mpsc::{self, Receiver, SyncSender}}, thread, time::Duration};
+
+use event_listener::Listener;
 
 use crate::{errcode::{FATAL_ERROR, SYSTEM_ERROR}, translog::{GetTransactionsParam, Transaction, TranslogPort, TranslogStreamer, error::LOG_TAIL_REACHED, state::CollectionState}, utils::vixerr::Error};
 
@@ -7,6 +9,7 @@ pub struct TranslogStreamerImpl {
     adapter: Arc<dyn TranslogPort>,
     state: Arc<CollectionState>,
     receiver: Receiver<Transaction>,
+    insert_wait_timeout: Duration,
 }
 
 impl TranslogStreamerImpl {
@@ -18,6 +21,7 @@ impl TranslogStreamerImpl {
         is_continuous: bool,
         max_batch: usize,
         max_outstanding: usize,
+        insert_wait_timeout: Duration,
     ) -> Box<dyn TranslogStreamer> {
         let (sender, receiver) = mpsc::sync_channel::<Transaction>(max_outstanding);
 
@@ -26,6 +30,7 @@ impl TranslogStreamerImpl {
             state,
             collection_id: collection_id.to_string(),
             receiver,
+            insert_wait_timeout,
         });
 
         streamer.stream_trx_logs(start_op_seq, sender, max_batch, max_outstanding, is_continuous);
@@ -41,10 +46,12 @@ impl TranslogStreamerImpl {
             .unwrap_or(0);
 
         let mut last_streamed_op_seq = start_op_seq - 1;
+        let mut block_offset: u64 = 0;
 
         let collection_id = self.collection_id.clone();
         let adapter = self.adapter.clone();
         let state = self.state.clone();
+        let insert_wait_timeout = self.insert_wait_timeout;
 
         thread::spawn(move || {
             loop {
@@ -62,10 +69,12 @@ impl TranslogStreamerImpl {
 
                 let seg = &snapshot[cur_seg_idx];
 
+                let insert_listener = state.insert_event.listen();
+
                 let result = match adapter.get_transactions(GetTransactionsParam {
                     collection_id: collection_id.clone(),
                     segment_id: seg.id.clone(),
-                    from_op_seq: last_streamed_op_seq + 1,
+                    from_block_offset: block_offset,
                     max_count: max_batch,
                 }) {
                     Ok(r) => r,
@@ -76,19 +85,28 @@ impl TranslogStreamerImpl {
                     Err(e) => {
                         if !state.is_active_segment(&seg.id) {
                             cur_seg_idx += 1;
+                        } else if !is_continuous {
+                            return;
+                        } else if insert_listener.wait_timeout(insert_wait_timeout).is_none() {
+                            println!("translog stream timeout occurred, continuing...");
                         }
                         continue
                     },
                 };
 
                 for trx in result.transactions {
+                    if trx.op_seq < last_streamed_op_seq + 1 {
+                        continue;
+                    }
+
+                    last_streamed_op_seq = trx.op_seq;
                     if let Err(e) = sender.send(trx) {
                         eprintln!("failed to sender.send: {}", e);
                         return
                     }
                 }
 
-                last_streamed_op_seq = result.last_op_seq
+                block_offset = result.next_block_offset;
             }
         });
     }

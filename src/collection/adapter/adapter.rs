@@ -37,7 +37,7 @@ impl CollectionAdapter {
     }
 
     fn get_commit(&self, commit_name: &str) -> Result<Commit, Error> {
-        let reader = self.storage.get_reader(COMMIT_STORE, commit_name)?;
+        let reader = self.storage.get_or_create_reader(COMMIT_STORE, commit_name)?;
         let commit_buf = reader.read_all()?;
 
         let commit_block = CommitBlock::from_buf(commit_buf)?;
@@ -55,7 +55,7 @@ impl CollectionPort for CollectionAdapter {
         let mut collections: Vec<GetAllPortResultCollection> = Vec::new();
         for internal_id in internal_ids {
             let (schema_store, schema_name) = schema_store_name(&internal_id);
-            let reader = self.storage.get_reader(&schema_store, &schema_name)?;
+            let reader = self.storage.get_or_create_reader(&schema_store, &schema_name)?;
 
             let schema_buf = reader.read_all()?;
             let schema_block = SchemaBlock::from_buf(schema_buf)?;

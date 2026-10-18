@@ -2,7 +2,6 @@ use std::{sync::{Mutex, atomic::{AtomicU64, Ordering}}, time::{Duration, Instant
 
 use crate::utils::vixerr::Error;
 
-
 pub struct CollectionState {
     collection_id: String,
     last_checkpoint_time: Mutex<Instant>,

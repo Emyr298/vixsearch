@@ -18,7 +18,7 @@ pub trait TranslogPort: Send + Sync {
     fn insert(&self, param: InsertPortParam) -> Result<InsertPortResult, Error>;
 
     fn load_or_create(&self, collection_id: &str) -> Result<LoadOrCreateResult, Error>;
-    fn unload(&self, collection_id: &str, segment_id: &str) -> Result<(), Error>;
+    fn unload(&self, collection_id: &str, segment_id: &str);
 }
 
 // Checkpoint
