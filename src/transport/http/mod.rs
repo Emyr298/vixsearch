@@ -1,4 +1,5 @@
-mod handler;
+mod collection_handler;
+mod collection_request_response;
 mod request_response;
 
-pub use handler::register_routes;
+pub use collection_handler::*;
