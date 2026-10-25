@@ -1,54 +1,32 @@
 use std::sync::{Arc, RwLock};
 
+use log::info;
+
 use crate::collection::adapter::helper::{
-    COMMIT_STORE, Commit, CommitBlock, GetLatestCommitResult, SchemaBlock, next_commit_number,
-    schema_store_name,
+    COMMIT_STORE, SchemaBlock, SchemaCommit, schema_store_name,
 };
 use crate::collection::port_param_result::{
     CreatePortParam, GetAllPortResult, GetAllPortResultCollection,
 };
 use crate::collection::service::CollectionPort;
-use crate::errcode::PARSE_ERROR;
 use crate::storage::Storage;
+use crate::utils::commit::commit_storage::CommitStorage;
+use crate::utils::commit::commit_storage_impl::CommitStorageImpl;
 use crate::utils::vixerr::Error;
 
 pub struct CollectionAdapter {
     storage: Arc<dyn Storage>,
+    commit_storage: Arc<dyn CommitStorage<SchemaCommit>>,
     commit_lock: RwLock<()>,
 }
 
 impl CollectionAdapter {
     pub fn new(storage: Arc<dyn Storage>) -> Arc<dyn CollectionPort> {
         Arc::new(CollectionAdapter {
-            storage: storage,
+            storage: storage.clone(),
+            commit_storage: CommitStorageImpl::new(storage),
             commit_lock: RwLock::new(()),
         })
-    }
-
-    // TODO: invalid commits should be cleaned at load
-    fn get_latest_commit(&self) -> Result<GetLatestCommitResult, Error> {
-        let names = self.storage.get_all_name_sorted(COMMIT_STORE)?;
-        let next_commit_number = next_commit_number(&names);
-
-        for commit_name in names.into_iter().filter(|n| n.starts_with("commit_")).rev() {
-            match self.get_commit(&commit_name) {
-                Ok(c) => return Ok(GetLatestCommitResult::new(next_commit_number, Some(c))),
-                Err(e) if e.code != PARSE_ERROR => return Err(e),
-                Err(_) => continue,
-            }
-        }
-
-        Ok(GetLatestCommitResult::new(next_commit_number, None))
-    }
-
-    fn get_commit(&self, commit_name: &str) -> Result<Commit, Error> {
-        let reader = self
-            .storage
-            .get_or_create_reader(COMMIT_STORE, commit_name)?;
-        let commit_buf = reader.read_all()?;
-
-        let commit_block = CommitBlock::from_buf(commit_buf)?;
-        commit_block.decode()
     }
 }
 
@@ -56,11 +34,11 @@ impl CollectionPort for CollectionAdapter {
     fn get_all(&self) -> Result<GetAllPortResult, Error> {
         let _guard = self.commit_lock.read().unwrap();
 
-        let result = self.get_latest_commit()?;
+        let result = self.commit_storage.get_last_commit(COMMIT_STORE)?;
         let internal_ids = result
-            .latest_commit
+            .commit
             .map(|c| c.collection_internal_ids)
-            .unwrap_or(vec![]);
+            .unwrap_or(Vec::new());
 
         let mut collections: Vec<GetAllPortResultCollection> = Vec::new();
         for internal_id in internal_ids {
@@ -93,30 +71,20 @@ impl CollectionPort for CollectionAdapter {
 
         let _guard = self.commit_lock.write().unwrap();
 
-        let result = self.get_latest_commit()?;
-        let commit = Commit::add_collection(&internal_id, result);
+        let result = self.commit_storage.get_last_commit(COMMIT_STORE)?;
+        let schema_commit_data = SchemaCommit::add_collection(&internal_id, &result);
 
-        let mut commit_writer = self
-            .storage
-            .create_write_once_writer(COMMIT_STORE, &commit.name())?;
-        let commit_buf = CommitBlock::from_commit(commit).encode();
-
-        commit_writer.write(&commit_buf)?;
-        commit_writer.commit()
+        self.commit_storage
+            .submit(COMMIT_STORE, result.next_number, schema_commit_data)
     }
 
     fn delete_by_internal_id(&self, internal_id: &str) -> Result<(), Error> {
         let _guard = self.commit_lock.write().unwrap();
 
-        let result = self.get_latest_commit()?;
-        if let Some(commit) = Commit::delete_collection(internal_id, result) {
-            let mut commit_writer = self
-                .storage
-                .create_write_once_writer(COMMIT_STORE, &commit.name())?;
-            let commit_buf = CommitBlock::from_commit(commit).encode();
-
-            commit_writer.write(&commit_buf)?;
-            commit_writer.commit()?;
+        let result = self.commit_storage.get_last_commit(COMMIT_STORE)?;
+        if let Some(schema_commit_data) = SchemaCommit::delete_collection(internal_id, &result) {
+            self.commit_storage
+                .submit(COMMIT_STORE, result.next_number, schema_commit_data)?;
         }
 
         Ok(())
