@@ -1,9 +1,15 @@
-use std::{sync::{Mutex, atomic::{AtomicU64, Ordering}}, time::{Duration, Instant}};
+use std::{
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 use crate::utils::vixerr::Error;
 
 pub struct CollectionState {
-    collection_id: String,
+    pub collection_id: String,
     last_checkpoint_time: Mutex<Instant>,
     checkpoint_interval: Duration,
 
@@ -12,11 +18,7 @@ pub struct CollectionState {
 }
 
 impl CollectionState {
-    pub fn new(
-        collection_id: &str,
-        checkpoint_interval: Duration,
-        checkpoint_op_seq: u64,
-    ) -> Self {
+    pub fn new(collection_id: &str, checkpoint_interval: Duration, checkpoint_op_seq: u64) -> Self {
         Self {
             collection_id: collection_id.to_string(),
             last_checkpoint_time: Mutex::new(Instant::now()),
@@ -34,7 +36,10 @@ impl CollectionState {
         self.pending_op_seq.fetch_max(op_seq, Ordering::AcqRel);
     }
 
-    pub fn try_submit_checkpoint(&self, submit_fn: Box<dyn FnOnce(u64) -> Result<(), Error> + Send + 'static>) -> Result<(), Error> {
+    pub fn try_submit_checkpoint(
+        &self,
+        submit_fn: Box<dyn FnOnce(u64) -> Result<(), Error> + Send + 'static>,
+    ) -> Result<(), Error> {
         let mut last_checkpoint_time = match self.last_checkpoint_time.lock() {
             Ok(l) => l,
             Err(_) => return Ok(()),
@@ -53,9 +58,9 @@ impl CollectionState {
 
         submit_fn(pending_op_seq)?;
 
-        self.checkpoint_op_seq.fetch_max(pending_op_seq, Ordering::AcqRel);
+        self.checkpoint_op_seq
+            .fetch_max(pending_op_seq, Ordering::AcqRel);
         *last_checkpoint_time = Instant::now();
         Ok(())
-    } 
+    }
 }
-
