@@ -1,15 +1,17 @@
-use crate::shared::ValueType;
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Collection {
-    pub id: String,
-    pub name: String,
-    pub fields: Vec<Field>,
+pub enum CollectionLifecycleEvent {
+    Loaded(CollectionLifecycleEventLoaded),
+    Created(CollectionLifecycleEventCreated),
+    Deleted(CollectionLifecycleEventDeleted),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Field {
-    pub name: String,
-    pub field_type: ValueType,
+pub struct CollectionLifecycleEventLoaded {
+    pub collection_ids: Vec<String>,
+}
+
+pub struct CollectionLifecycleEventCreated {
+    pub collection_id: String,
+}
+
+pub struct CollectionLifecycleEventDeleted {
+    pub collection_id: String,
 }
