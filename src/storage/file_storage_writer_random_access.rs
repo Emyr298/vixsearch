@@ -22,8 +22,7 @@ impl RandomAccessStorageWriter for RandomAccessFileStorageWriter {
     fn write(&self, offset: u64, data: &[u8]) -> Result<(), Error> {
         if let Err(e) = self.file.write_all_at(data, offset) {
             return Error::code(FATAL_ERROR)
-                .message("failed to write to file")
-                .wrap(e)
+                .wrap("failed to write to file", e)
                 .throw();
         }
 
@@ -33,8 +32,7 @@ impl RandomAccessStorageWriter for RandomAccessFileStorageWriter {
     fn flush(&self) -> Result<(), Error> {
         if let Err(e) = self.file.sync_all() {
             return Error::code(FATAL_ERROR)
-                .message("failed to flush file")
-                .wrap(e)
+                .wrap("failed to flush file", e)
                 .throw();
         };
 

@@ -4,13 +4,16 @@ use crate::{
     errcode::PARSE_ERROR,
     storage::Storage,
     utils::{
-        commit::commit_storage::{COMMIT_MAGIC, CommitStorage, GetLastCommitResult, NAME_PREFIX},
+        commit::commit_storage::{CommitStorage, GetLastCommitResult},
         vixerr::Error,
     },
 };
 use deku::{DekuContainerRead, DekuContainerWrite, DekuRead, DekuWrite};
 use log::warn;
 use serde::{Deserialize, Serialize};
+
+const COMMIT_MAGIC: &[u8; 4] = b"CMMT";
+const NAME_PREFIX: &str = "commit";
 
 pub struct CommitStorageImpl<T>
 where
@@ -35,7 +38,9 @@ where
         let reader = self
             .storage
             .get_or_create_reader(commit_store, commit_name)?;
-        let commit_buf = reader.read_all()?;
+        let read_result = reader.read_all();
+        self.storage.close(commit_store, commit_name);
+        let commit_buf = read_result?;
 
         let commit_block = CommitBlock::from_buf(commit_buf)?;
         commit_block.decode()
@@ -101,8 +106,7 @@ fn next_commit_number(names_asc: &[String]) -> u64 {
 pub struct CommitBlock {
     magic: [u8; 4],
     hash: [u8; 4],
-    data_len: u64,
-    #[deku(count = "data_len")]
+    #[deku(read_all)]
     data: Vec<u8>,
 }
 
@@ -116,7 +120,6 @@ impl CommitBlock {
         CommitBlock {
             magic: *COMMIT_MAGIC,
             hash: crc32fast::hash(&data_buf).to_le_bytes(),
-            data_len: (data_buf.len() as u64),
             data: data_buf,
         }
     }
@@ -129,8 +132,7 @@ impl CommitBlock {
             Ok(c) => c,
             Err(e) => {
                 return Error::code(PARSE_ERROR)
-                    .message("failed to decode commit buffer")
-                    .wrap(e)
+                    .wrap("failed to decode commit buffer", e)
                     .throw();
             }
         };
@@ -143,17 +145,22 @@ impl CommitBlock {
             Ok(b) => b,
             Err(e) => {
                 return Error::code(PARSE_ERROR)
-                    .message("failed to decode commit buffer")
-                    .wrap(e)
+                    .wrap("failed to decode commit buffer", e)
                     .throw();
             }
         };
+
+        if block.magic != *COMMIT_MAGIC {
+            return Error::code(PARSE_ERROR)
+                .error("invalid commit magic")
+                .throw();
+        }
 
         let expected_hash = u32::from_le_bytes(block.hash.try_into().unwrap());
         let actual_hash = crc32fast::hash(&block.data);
         if expected_hash != actual_hash {
             return Error::code(PARSE_ERROR)
-                .message("invalid commit hash")
+                .error("invalid commit hash")
                 .throw();
         }
 

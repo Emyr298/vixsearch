@@ -4,6 +4,8 @@ use std::{
     path::PathBuf,
 };
 
+use log::warn;
+
 use crate::{errcode::FATAL_ERROR, storage::WriteOnceStorageWriter, utils::vixerr::Error};
 
 pub struct WriteOnceFileStorageWriter {
@@ -30,8 +32,7 @@ impl WriteOnceStorageWriter for WriteOnceFileStorageWriter {
     fn write(&mut self, data: &[u8]) -> Result<(), Error> {
         if let Err(e) = self.file.write_all(data) {
             return Error::code(FATAL_ERROR)
-                .message("failed to write to file")
-                .wrap(e)
+                .wrap("failed to write to file", e)
                 .throw();
         };
 
@@ -41,16 +42,21 @@ impl WriteOnceStorageWriter for WriteOnceFileStorageWriter {
     fn commit(self: Box<Self>) -> Result<(), Error> {
         if let Err(e) = self.file.sync_all() {
             return Error::code(FATAL_ERROR)
-                .message("failed to flush file")
-                .wrap(e)
+                .wrap("failed to flush file", e)
                 .throw();
         };
 
-        if let Err(e) = fs::rename(&self.temp_path, &self.commit_path) {
+        if let Err(e) = fs::hard_link(&self.temp_path, &self.commit_path) {
             return Error::code(FATAL_ERROR)
-                .message("failed to atomic rename file")
-                .wrap(e)
+                .wrap("failed to atomic hard link file", e)
                 .throw();
+        }
+
+        if let Err(e) = fs::remove_file(&self.temp_path) {
+            warn!(
+                "failed to remove temp file {}: {e}",
+                self.temp_path.display()
+            );
         }
 
         if let Some(parent_path) = self.commit_path.parent() {
@@ -58,19 +64,17 @@ impl WriteOnceStorageWriter for WriteOnceFileStorageWriter {
                 Ok(f) => f,
                 Err(e) => {
                     return Error::code(FATAL_ERROR)
-                        .message(format!(
-                            "failed to open directory {}",
-                            parent_path.display()
-                        ))
-                        .wrap(e)
+                        .wrap(
+                            format!("failed to open directory {}", parent_path.display()),
+                            e,
+                        )
                         .throw();
                 }
             };
 
             if let Err(e) = parent.sync_all() {
                 return Error::code(FATAL_ERROR)
-                    .message("failed to flush directory")
-                    .wrap(e)
+                    .wrap("failed to flush directory", e)
                     .throw();
             }
         }

@@ -24,6 +24,10 @@ impl ValueType {
             "int64" => Ok(ValueType::Int64),
             _ => Error::code(PARSE_ERROR)
                 .message(format!("invalid value type: {}", value_type_str))
+                .error(format!(
+                    "failed to ValueType::new: invalid value type: {}",
+                    value_type_str
+                ))
                 .throw(),
         }
     }
@@ -42,6 +46,11 @@ impl ValueType {
                 default => {
                     return Error::code(PARSE_ERROR)
                         .message(format!("invalid value for {}: {}", self.string(), default))
+                        .error(format!(
+                            "failed to ValueType::value: invalid value for {}: {}",
+                            self.string(),
+                            default
+                        ))
                         .throw();
                 }
             },
@@ -50,6 +59,11 @@ impl ValueType {
                 default => {
                     return Error::code(PARSE_ERROR)
                         .message(format!("invalid value for {}: {}", self.string(), default))
+                        .error(format!(
+                            "failed to ValueType::value: invalid value for {}: {}",
+                            self.string(),
+                            default
+                        ))
                         .throw();
                 }
             },

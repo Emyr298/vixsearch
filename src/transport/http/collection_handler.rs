@@ -8,7 +8,7 @@ use validator::Validate;
 
 use crate::{
     collection::CollectionService,
-    errcode::PARSE_ERROR,
+    errcode::{FATAL_ERROR, PARSE_ERROR},
     transport::http::{
         collection_request_response::{CreateCollectionRequest, GetByIDResponse},
         request_response::{http_error, http_success},
@@ -35,7 +35,7 @@ async fn get_collection(
 
     let collection = match result {
         Ok(c) => c,
-        Err(e) => return http_error(e, "failed to get collection"),
+        Err(e) => return http_error(e),
     };
 
     http_success(
@@ -51,14 +51,14 @@ async fn create_collection(
     collection_service: Data<dyn CollectionService>,
 ) -> Result<HttpResponse> {
     if let Err(_) = payload.validate() {
-        return http_error(Error::code(PARSE_ERROR), "failed to validate request");
+        return http_error(Error::code(PARSE_ERROR).error("failed to validate request"));
     }
 
     let result = block(move || collection_service.create(payload.create_param()))
         .await
         .unwrap();
     if let Err(e) = result {
-        return http_error(e, "failed to create collection");
+        return http_error(e);
     }
 
     http_success(StatusCode::CREATED, "SUCCESS", ())
@@ -75,7 +75,7 @@ async fn delete_collection(
         .await
         .unwrap();
     if let Err(e) = result {
-        return http_error(e, "failed to delete collection");
+        return http_error(e);
     }
 
     http_success(StatusCode::ACCEPTED, "SUCCESS", ())

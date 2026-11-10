@@ -73,6 +73,10 @@ impl CollectionState {
                 None => {
                     return Error::code(PARSE_ERROR)
                         .message(format!("unknown field: {}", key))
+                        .error(format!(
+                            "failed to parse parse_raw_document_payload: unknown field: {}",
+                            key
+                        ))
                         .throw();
                 }
             };
@@ -82,7 +86,10 @@ impl CollectionState {
         }
 
         if document_payload.len() < self.field_types.len() {
-            return Error::code(PARSE_ERROR).message("missing fields").throw();
+            return Error::code(PARSE_ERROR)
+                .message("missing fields")
+                .error("failed to parse_raw_document_payload: missing fields")
+                .throw();
         }
 
         Ok(document_payload)

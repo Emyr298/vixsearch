@@ -103,6 +103,7 @@ impl CollectionService for ServiceImpl {
             None => {
                 return Error::code(NOT_FOUND)
                     .message("collection not found")
+                    .error("collection not found")
                     .throw();
             }
         };
@@ -118,6 +119,7 @@ impl CollectionService for ServiceImpl {
         if let Entry::Occupied(_) = &collection_entry {
             return Error::code(EXISTS)
                 .message("collection already exists")
+                .error("collection already exists")
                 .throw();
         }
 
@@ -135,7 +137,7 @@ impl CollectionService for ServiceImpl {
 
         // Sync to other services
         let event = CollectionLifecycleEvent::Created(CollectionLifecycleEventCreated {
-            collection_id: param.id.to_string(),
+            collection_id: internal_id.clone(),
         });
 
         for handler in self.lifecycle_handlers.list().iter() {
@@ -160,15 +162,24 @@ impl CollectionService for ServiceImpl {
             None => {
                 return Error::code(NOT_FOUND)
                     .message("collection not found")
+                    .error("collection not found")
                     .throw();
             }
         };
 
         let internal_id = {
-            let collection = collection_arc.write().unwrap();
-            if collection.status == CollectionStatus::Deleting {
-                return Ok(());
+            let mut collection = collection_arc.write().unwrap();
+            match collection.status {
+                CollectionStatus::Deleting => return Ok(()),
+                CollectionStatus::Loading => {
+                    return Error::code(NOT_READY)
+                        .message("collection is not ready")
+                        .error("collection status is NOT_READY")
+                        .throw();
+                }
+                CollectionStatus::Ready => {}
             }
+            collection.status = CollectionStatus::Deleting;
             collection.internal_id.clone()
         };
 
@@ -178,7 +189,7 @@ impl CollectionService for ServiceImpl {
 
         // Sync to other services
         let event = CollectionLifecycleEvent::Deleted(CollectionLifecycleEventDeleted {
-            collection_id: id.to_string(),
+            collection_id: internal_id.clone(),
         });
 
         for handler in self.lifecycle_handlers.list().iter() {
@@ -201,6 +212,7 @@ impl CollectionService for ServiceImpl {
             None => {
                 return Error::code(NOT_FOUND)
                     .message("collection not found")
+                    .error("collection not found in collection_by_id")
                     .throw();
             }
         };
@@ -209,6 +221,7 @@ impl CollectionService for ServiceImpl {
         if collection.status != CollectionStatus::Ready {
             return Error::code(NOT_READY)
                 .message("collection not ready or lagging")
+                .error("collection status is NOT_READY")
                 .throw();
         }
 

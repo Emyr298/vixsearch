@@ -11,9 +11,6 @@ where
     fn get_last_commit(&self, store: &str) -> Result<GetLastCommitResult<T>, Error>;
 }
 
-pub const COMMIT_MAGIC: &[u8; 4] = b"CMMT";
-pub const NAME_PREFIX: &str = "commit";
-
 pub struct GetLastCommitResult<T> {
     pub next_number: u64,
     pub commit: Option<T>,

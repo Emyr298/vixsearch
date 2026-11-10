@@ -18,12 +18,16 @@ pub struct CreateParam {
 impl CreateParam {
     pub fn validate(&self) -> Result<(), Error> {
         if self.id.len() == 0 {
-            return Error::code(PARSE_ERROR).message("id is empty").throw();
+            return Error::code(PARSE_ERROR)
+                .message("id is empty")
+                .error("failed to CreateParam.validate: id is empty")
+                .throw();
         }
 
         if self.id.starts_with('_') {
             return Error::code(PARSE_ERROR)
                 .message("id cannot start with _")
+                .error("failed to CreateParam.validate: id cannot start with _")
                 .throw();
         }
 
@@ -34,6 +38,7 @@ impl CreateParam {
         if !valid_chars {
             return Error::code(PARSE_ERROR)
                 .message("id should contain only alphanumeric and underscore")
+                .error("failed to CreateParam.validate: id should contain only alphanumeric and underscore")
                 .throw();
         }
 
@@ -69,12 +74,14 @@ impl CreateParamField {
         if self.name.len() == 0 {
             return Error::code(PARSE_ERROR)
                 .message("field name is empty")
+                .error("failed to CreateParamField.validate: field name is empty")
                 .throw();
         }
 
         if self.name.starts_with('_') {
             return Error::code(PARSE_ERROR)
                 .message("field name cannot start with _")
+                .error("failed to CreateParamField.validate: field name cannot start with _")
                 .throw();
         }
 
@@ -84,7 +91,8 @@ impl CreateParamField {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
         if !valid_chars {
             return Error::code(PARSE_ERROR)
-                .message("field name should contain only alphanumeric and underscore")
+                .message("field name should contain only lowercase alphanumeric and underscore")
+                .error("failed to CreateParamField.validate: field name should contain only lowercase alphanumeric and underscore")
                 .throw();
         }
 

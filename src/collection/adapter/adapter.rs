@@ -1,7 +1,5 @@
 use std::sync::{Arc, RwLock};
 
-use log::info;
-
 use crate::collection::adapter::helper::{
     COMMIT_STORE, SchemaBlock, SchemaCommit, schema_store_name,
 };
@@ -47,7 +45,10 @@ impl CollectionPort for CollectionAdapter {
                 .storage
                 .get_or_create_reader(&schema_store, &schema_name)?;
 
-            let schema_buf = reader.read_all()?;
+            let schema_result = reader.read_all();
+            self.storage.close(&schema_store, &schema_name);
+            let schema_buf = schema_result?;
+
             let schema_block = SchemaBlock::from_buf(schema_buf)?;
             let schema = match schema_block.decode() {
                 Ok(s) => s,

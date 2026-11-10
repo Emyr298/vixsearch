@@ -109,8 +109,7 @@ impl SchemaBlock {
             Ok(b) => b,
             Err(e) => {
                 return Error::code(PARSE_ERROR)
-                    .message("failed to decode schema buffer")
-                    .wrap(e)
+                    .wrap("failed to decode schema buffer", e)
                     .throw();
             }
         };
@@ -119,7 +118,7 @@ impl SchemaBlock {
         let actual_hash = crc32fast::hash(&block.schema);
         if expected_hash != actual_hash {
             return Error::code(PARSE_ERROR)
-                .message("invalid schema hash")
+                .error("invalid schema hash")
                 .throw();
         }
 
@@ -135,8 +134,7 @@ impl SchemaBlock {
             Ok(c) => c,
             Err(e) => {
                 return Error::code(PARSE_ERROR)
-                    .message("failed to decode schema buffer")
-                    .wrap(e)
+                    .wrap("failed to decode schema buffer", e)
                     .throw();
             }
         };

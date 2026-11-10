@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use crate::utils::vixerr::Error;
 
+// TODO: may want to have read_all_once API for one time reads, so that client won't need to close manually
+
 pub trait Storage: Send + Sync {
     fn get_all_name_sorted(&self, store: &str) -> Result<Vec<String>, Error>;
     fn get_or_create_reader(

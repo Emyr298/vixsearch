@@ -1,8 +1,11 @@
-// use std::sync::Arc;
-
-use actix_web::{App, HttpServer, web};
-// use actix_web::{App, HttpServer, web};
+use actix_web::{
+    App, HttpResponse, HttpServer,
+    error::InternalError,
+    http::StatusCode,
+    web::{self, JsonConfig},
+};
 use dotenvy::dotenv;
+use log::error;
 
 mod collection;
 mod common;
@@ -18,10 +21,7 @@ use utils::vixerr;
 use crate::{
     di::Application,
     transport::http::register_collection_routes,
-    utils::{
-        http::{json_error_handler, not_found_route},
-        vixerr::Error,
-    },
+    utils::{http::response_error, vixerr::Error},
 };
 
 fn main() {
@@ -33,7 +33,8 @@ fn main() {
 
     let app = di::register_dependencies();
     if let Err(err) = load(&app) {
-        panic!("PANIC: {}", &err.message);
+        error!("[{}] {}", err.code, err);
+        std::process::abort();
     }
 
     let actix_thread = std::thread::spawn(move || start_actix(&app));
@@ -49,10 +50,7 @@ fn start_actix(app: &Application) {
     actix_web::rt::System::new().block_on(async move {
         HttpServer::new(move || {
             App::new()
-                .app_data(json_error_handler(
-                    errcode::PARSE_ERROR,
-                    "failed to parse request",
-                ))
+                .app_data(json_error_handler())
                 .app_data(orchestrator_data.clone())
                 .configure(register_collection_routes)
                 .default_service(web::route().to(not_found_route))
@@ -63,4 +61,23 @@ fn start_actix(app: &Application) {
         .await
         .unwrap();
     });
+}
+
+pub fn json_error_handler() -> JsonConfig {
+    JsonConfig::default().error_handler(move |e, _| {
+        let response = response_error(
+            StatusCode::BAD_REQUEST,
+            errcode::PARSE_ERROR,
+            Some(e.to_string()),
+        );
+        InternalError::from_response(e, response).into()
+    })
+}
+
+pub async fn not_found_route() -> HttpResponse {
+    response_error(
+        StatusCode::NOT_FOUND,
+        errcode::NOT_FOUND,
+        Some("route not found".to_string()),
+    )
 }

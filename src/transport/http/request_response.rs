@@ -8,8 +8,8 @@ use serde::Serialize;
 use crate::{
     errcode,
     utils::{
-        http::{HttpError, response_success},
-        vixerr::Error,
+        http::{response_error, response_success},
+        vixerr,
     },
 };
 
@@ -18,13 +18,28 @@ pub fn http_success<T: Serialize>(
     code: impl Into<String>,
     data: T,
 ) -> Result<HttpResponse> {
-    Ok(HttpResponse::build(status_code).json(response_success(&code.into(), data)))
+    Ok(response_success(status_code, &code.into(), data))
 }
 
-pub fn http_error(err: Error, message: impl Into<String>) -> Result<HttpResponse> {
-    let message = message.into();
-    error!("[{}] {}", err.code, err);
-    HttpError::new(get_http_status_code(&err.code), &err.code, &message).throw()
+pub fn http_error(e: impl std::error::Error + 'static) -> Result<HttpResponse> {
+    let mut code = errcode::SYSTEM_ERROR.to_string();
+    if let Some(ve) = (&e as &dyn std::error::Error).downcast_ref::<vixerr::Error>() {
+        code = ve.code.clone();
+    }
+
+    error!("[{}] {}", code, e);
+    if code == errcode::FATAL_ERROR {
+        std::process::abort();
+    }
+
+    let status_code = get_http_status_code(&code);
+
+    let mut message = None;
+    if let Some(ve) = (&e as &dyn std::error::Error).downcast_ref::<vixerr::Error>() {
+        message = ve.message.clone();
+    }
+
+    Ok(response_error(status_code, &code, message))
 }
 
 fn get_http_status_code(code: &str) -> http::StatusCode {

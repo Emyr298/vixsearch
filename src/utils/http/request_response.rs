@@ -1,4 +1,7 @@
+use actix_web::{HttpResponse, http::StatusCode};
 use serde::Serialize;
+
+const DEFAULT_ERROR_MESSAGE: &str = "An error occurred";
 
 #[derive(Serialize)]
 pub struct ApiResponse<T: Serialize> {
@@ -12,23 +15,24 @@ pub struct ApiResponseError {
     pub errors: Vec<String>,
 }
 
-pub fn response_success<T: Serialize>(code: &str, data: T) -> ApiResponse<T> {
-    ApiResponse {
+pub fn response_success<T: Serialize>(
+    status_code: StatusCode,
+    code: &str,
+    data: T,
+) -> HttpResponse {
+    HttpResponse::build(status_code).json(ApiResponse {
         code: code.to_string(),
         data,
-    }
+    })
 }
 
-pub fn response_error(code: &str, error: &str) -> ApiResponseError {
-    ApiResponseError {
+pub fn response_error(
+    status_code: StatusCode,
+    code: &str,
+    message: Option<String>,
+) -> HttpResponse {
+    HttpResponse::build(status_code).json(ApiResponseError {
         code: code.to_string(),
-        errors: vec![error.to_string()],
-    }
-}
-
-pub fn response_errors(code: &str, errors: &[String]) -> ApiResponseError {
-    ApiResponseError {
-        code: code.to_string(),
-        errors: errors.to_vec(),
-    }
+        errors: vec![message.unwrap_or(DEFAULT_ERROR_MESSAGE.to_string())],
+    })
 }

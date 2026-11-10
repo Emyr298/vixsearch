@@ -23,12 +23,10 @@ impl StorageReader for FileStorageReader {
         match self.file.read_exact_at(&mut buf, offset) {
             Ok(()) => Ok(buf),
             Err(e) if e.kind() == ErrorKind::UnexpectedEof => Error::code(OUT_OF_RANGE)
-                .message("read beyond end of file")
-                .wrap(e)
+                .wrap("read beyond end of file", e)
                 .throw(),
             Err(e) => Error::code(FATAL_ERROR)
-                .message("failed to read from file")
-                .wrap(e)
+                .wrap("failed to read from file", e)
                 .throw(),
         }
     }
@@ -43,8 +41,7 @@ impl StorageReader for FileStorageReader {
             Ok(m) => return Ok(m.len()),
             Err(err) => {
                 return Error::code(FATAL_ERROR)
-                    .message("failed to open file")
-                    .wrap(err)
+                    .wrap("failed to open file", err)
                     .throw();
             }
         }

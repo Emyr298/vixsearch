@@ -47,8 +47,7 @@ impl Storage for FileStorage {
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
             Err(e) => {
                 return Error::code(FATAL_ERROR)
-                    .message("failed to read directory")
-                    .wrap(e)
+                    .wrap("failed to read directory", e)
                     .throw();
             }
         };
@@ -57,8 +56,7 @@ impl Storage for FileStorage {
             Ok(e) => e,
             Err(e) => {
                 return Error::code(FATAL_ERROR)
-                    .message("failed to read directory")
-                    .wrap(e)
+                    .wrap("failed to read directory", e)
                     .throw();
             }
         };
@@ -73,7 +71,7 @@ impl Storage for FileStorage {
             Ok(names) => names,
             Err(name_os) => {
                 return Error::code(FATAL_ERROR)
-                    .message(format!("invalid filename {:?}", name_os))
+                    .error(format!("invalid filename {:?}", name_os))
                     .throw();
             }
         };
@@ -95,8 +93,10 @@ impl Storage for FileStorage {
                 if let Some(parent) = path.parent() {
                     if let Err(e) = fs::create_dir_all(parent) {
                         return Error::code(FATAL_ERROR)
-                            .message(format!("failed to create directory {}", parent.display()))
-                            .wrap(e)
+                            .wrap(
+                                format!("failed to create directory {}", parent.display()),
+                                e,
+                            )
                             .throw();
                     }
                 }
@@ -107,16 +107,14 @@ impl Storage for FileStorage {
                     Ok(f) => Arc::new(f),
                     Err(e) => {
                         return Error::code(FATAL_ERROR)
-                            .message(format!("failed to open file {}", path.display()))
-                            .wrap(e)
+                            .wrap(format!("failed to open file {}", path.display()), e)
                             .throw();
                     }
                 };
 
                 if let Err(e) = file_arc.sync_all() {
                     return Error::code(FATAL_ERROR)
-                        .message("failed to flush file")
-                        .wrap(e)
+                        .wrap("failed to flush file", e)
                         .throw();
                 }
 
@@ -125,16 +123,14 @@ impl Storage for FileStorage {
                         Ok(d) => d,
                         Err(e) => {
                             return Error::code(FATAL_ERROR)
-                                .message(format!("failed to open directory {}", parent.display()))
-                                .wrap(e)
+                                .wrap(format!("failed to open directory {}", parent.display()), e)
                                 .throw();
                         }
                     };
 
                     if let Err(e) = dir.sync_all() {
                         return Error::code(FATAL_ERROR)
-                            .message("failed to flush directory")
-                            .wrap(e)
+                            .wrap("failed to flush directory", e)
                             .throw();
                     }
                 }
@@ -157,11 +153,10 @@ impl Storage for FileStorage {
         if let Some(temp_parent) = temp_path.parent() {
             if let Err(e) = fs::create_dir_all(temp_parent) {
                 return Error::code(FATAL_ERROR)
-                    .message(format!(
-                        "failed to create temp directory {}",
-                        temp_parent.display()
-                    ))
-                    .wrap(e)
+                    .wrap(
+                        format!("failed to create temp directory {}", temp_parent.display()),
+                        e,
+                    )
                     .throw();
             }
         }
@@ -171,11 +166,13 @@ impl Storage for FileStorage {
         if let Some(commit_parent) = commit_path.parent() {
             if let Err(e) = fs::create_dir_all(commit_parent) {
                 return Error::code(FATAL_ERROR)
-                    .message(format!(
-                        "failed to create commit directory {}",
-                        commit_parent.display()
-                    ))
-                    .wrap(e)
+                    .wrap(
+                        format!(
+                            "failed to create commit directory {}",
+                            commit_parent.display()
+                        ),
+                        e,
+                    )
                     .throw();
             }
         }
@@ -189,8 +186,7 @@ impl Storage for FileStorage {
             Ok(f) => f,
             Err(e) => {
                 return Error::code(FATAL_ERROR)
-                    .message(format!("failed to open file {}", temp_path.display()))
-                    .wrap(e)
+                    .wrap(format!("failed to open file {}", temp_path.display()), e)
                     .throw();
             }
         };
@@ -218,8 +214,7 @@ impl Storage for FileStorage {
                     Ok(f) => Arc::new(f),
                     Err(e) => {
                         return Error::code(FATAL_ERROR)
-                            .message(format!("failed to open file {}", path.display()))
-                            .wrap(e)
+                            .wrap(format!("failed to open file {}", path.display()), e)
                             .throw();
                     }
                 };
