@@ -1,7 +1,7 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use crate::{
-    errcode::PARSE_ERROR,
+    errcode::{FATAL_ERROR, PARSE_ERROR},
     storage::Storage,
     utils::{
         commit::commit_storage::{CommitStorage, GetLastCommitResult},
@@ -73,7 +73,11 @@ where
         for commit_name in names.into_iter().filter(|n| n.starts_with(&prefix)).rev() {
             match self.get_commit(&store, &commit_name) {
                 Ok(c) => return Ok(GetLastCommitResult::new(next_commit_number, Some(c))),
-                Err(e) if e.code != PARSE_ERROR => return Err(e),
+                Err(e) if e.code != PARSE_ERROR => {
+                    return Error::code(FATAL_ERROR)
+                        .wrap("failed to read commit", e)
+                        .throw();
+                }
                 Err(e) => {
                     warn!("failed to read commit {} error={:?}", commit_name, e);
                     continue;

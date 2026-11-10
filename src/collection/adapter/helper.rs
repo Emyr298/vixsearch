@@ -86,8 +86,7 @@ impl SchemaField {
 pub struct SchemaBlock {
     magic: [u8; 4],
     hash: [u8; 4],
-    schema_len: u64,
-    #[deku(count = "schema_len")]
+    #[deku(read_all)]
     schema: Vec<u8>,
 }
 
@@ -99,7 +98,6 @@ impl SchemaBlock {
         SchemaBlock {
             magic: *SCHEMA_MAGIC,
             hash: crc32fast::hash(&schema_buf).to_le_bytes(),
-            schema_len: (schema_buf.len() as u64),
             schema: schema_buf,
         }
     }
@@ -113,6 +111,12 @@ impl SchemaBlock {
                     .throw();
             }
         };
+
+        if block.magic != *SCHEMA_MAGIC {
+            return Error::code(PARSE_ERROR)
+                .error("invalid schema magic")
+                .throw();
+        }
 
         let expected_hash = u32::from_le_bytes(block.hash.try_into().unwrap());
         let actual_hash = crc32fast::hash(&block.schema);

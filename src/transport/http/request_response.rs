@@ -48,6 +48,7 @@ fn get_http_status_code(code: &str) -> http::StatusCode {
         errcode::PARSE_ERROR => http::StatusCode::BAD_REQUEST,
         errcode::NOT_FOUND => http::StatusCode::NOT_FOUND,
         errcode::EXISTS => http::StatusCode::CONFLICT,
+        errcode::NOT_READY => http::StatusCode::SERVICE_UNAVAILABLE,
         _ => http::StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
